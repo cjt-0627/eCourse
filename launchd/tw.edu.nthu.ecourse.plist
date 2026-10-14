@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>tw.edu.nthu.ecourse</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chenjingting/Developer/project/eCourseweb/.venv/bin/ecourse</string>
+    <string>start</string>
+    <string>--browser</string>
+    <string>none</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/chenjingting/Developer/project/eCourseweb</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ECOURSE_DATA_DIR</key>
+    <string>/Users/chenjingting/Developer/project/eCourseweb/.data</string>
+    <key>ECOURSE_SECRET_DIR</key>
+    <string>/Users/chenjingting/Developer/project/eCourseweb/.secrets</string>
+    <key>PLAYWRIGHT_BROWSERS_PATH</key>
+    <string>/Users/chenjingting/Developer/project/eCourseweb/.cache/ms-playwright</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/chenjingting/Developer/project/eCourseweb/.runtime/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/chenjingting/Developer/project/eCourseweb/.runtime/launchd.stderr.log</string>
+</dict>
+</plist>

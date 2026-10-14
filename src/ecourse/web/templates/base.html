@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{{ title }} · eCourse</title>
+  <script src="/static/theme.js"></script><link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/components.css">
+</head>
+<body data-csrf="{{ csrf_token }}" data-locale="{{ locale }}">
+  <div class="shell">
+    <aside>
+      <a class="brand" href="/"><span>e</span>Course</a>
+      <nav aria-label="{{ t('主要導覽') }}">
+        <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a>
+        <a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a>
+        <a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a>
+        <a class="{{ 'active' if active == 'notifications' }}" href="/notifications">{{ t('通知') }}</a>
+        <a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
+      </nav>
+      <div class="account"><span>{{ user.login_name }}</span><button class="link" data-action="logout">{{ t('登出') }}</button></div>
+    </aside>
+    <main>
+      <header><div><h1>{{ title }}</h1></div>{% block action %}{% endblock %}</header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <nav class="mobile-nav" aria-label="{{ t('手機導覽') }}">
+    <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a><a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a><a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a><a class="{{ 'active' if active == 'notifications' }}" href="/notifications">{{ t('通知') }}</a><a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
+  </nav>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

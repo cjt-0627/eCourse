@@ -1,0 +1,11 @@
+ccxp-lite OAuth decaptcha runtime and trained model weights
+Source: https://github.com/Hsiii/ccxp-lite
+Copyright (c) 2026 Hsi
+License: MIT
+
+The trained weights were produced using ccxpDecaptcha, a fork of
+nthu-ccxp-captcha (https://github.com/25349023/nthu-ccxp-captcha), whose
+training pipeline is MIT licensed, Copyright (c) 25349023.
+
+The full MIT permission and warranty text is included in the top-level
+THIRD_PARTY_NOTICES file distributed with eCourse.

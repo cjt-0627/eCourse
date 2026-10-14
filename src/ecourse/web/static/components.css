@@ -1,0 +1,11 @@
+.captcha { display: block; width: 240px; max-width: 100%; height: auto; min-height: 56px; margin: 1rem 0; border: 1px solid var(--line); border-radius: .5rem; }
+.actions { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+a { color: var(--green); text-decoration-thickness: .08em; text-underline-offset: .16em; }
+.row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.todo.targeted { outline: 2px solid var(--accent, var(--green)); outline-offset: .2rem; border-radius: .7rem; }
+@media (max-width: 420px) {
+  .row { flex-wrap: wrap; }
+  .row > .actions { width: 100%; justify-content: flex-start; }
+  .stats article, .panel, .course-card, .empty { padding: 1rem; }
+  main > header { flex-wrap: wrap; }
+}

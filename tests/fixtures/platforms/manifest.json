@@ -1,0 +1,18 @@
+{
+  "source": "authorized read-only capture",
+  "raw_html_persisted": false,
+  "files": [
+    "eeclass_bulletin_list.html",
+    "eeclass_course.html",
+    "eeclass_dashboard.html",
+    "eeclass_exam_list.html",
+    "eeclass_homework.html",
+    "eeclass_homework_list.html",
+    "eeclass_homework_report.html",
+    "eeclass_material_list.html",
+    "elearn_assignment_open.html",
+    "elearn_assignment_submitted.html",
+    "elearn_dashboard.html",
+    "elearn_quiz_completed.html"
+  ]
+}

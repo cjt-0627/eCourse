@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-tabs"><a href="/settings/connections">{{ t('連接') }}</a><a href="/settings/reminders">{{ t('提醒') }}</a><a class="active" href="/settings/appearance">{{ t('外觀') }}</a><a href="/status">{{ t('系統狀態') }}</a></div>
+<section class="panel appearance-panel">
+  <fieldset class="theme-options"><legend>{{ t('顯示模式') }}</legend>
+    <label class="theme-choice"><input type="radio" name="appearance" value="light"><span class="theme-preview preview-light" aria-hidden="true"><span class="preview-sidebar"></span><span class="preview-content"><i></i><i></i><i></i></span></span><span class="theme-label">{{ t('淺色') }}</span></label>
+    <label class="theme-choice"><input type="radio" name="appearance" value="dark"><span class="theme-preview preview-dark" aria-hidden="true"><span class="preview-sidebar"></span><span class="preview-content"><i></i><i></i><i></i></span></span><span class="theme-label">{{ t('深色') }}</span></label>
+    <label class="theme-choice"><input type="radio" name="appearance" value="system"><span class="theme-preview preview-system" aria-hidden="true"><span class="preview-sidebar"></span><span class="preview-content"><i></i><i></i><i></i></span></span><span class="theme-label">{{ t('跟隨系統') }}</span></label>
+  </fieldset>
+  <p id="appearance-status" class="fine" role="status"></p>
+</section>
+<section class="panel appearance-panel">
+  <form id="language-form">
+    <fieldset><legend>{{ t('語言') }}</legend>
+      <label class="check"><input type="radio" name="locale" value="zh-Hant" {{ 'checked' if locale == 'zh-Hant' }}>繁體中文</label>
+      <label class="check"><input type="radio" name="locale" value="en" {{ 'checked' if locale == 'en' }}>English</label>
+    </fieldset>
+    <p class="fine">{{ t('介面語言會儲存在你的帳號中。') }}</p>
+  </form>
+</section>
+{% endblock %}

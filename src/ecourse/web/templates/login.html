@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登入 · eCourse</title><script src="/static/theme.js"></script><link rel="stylesheet" href="/static/app.css"></head>
+<body class="login-page" data-csrf="{{ csrf_token }}"><main class="login-card"><a class="brand" href="/"><span>e</span>Course</a><h1>登入</h1>
+{% if initialized %}<form id="login-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>校務帳號<input name="login_name" autocomplete="username" required autofocus></label><label>校務密碼<input name="password" type="password" autocomplete="current-password" required></label><p id="login-error" class="error" role="alert"></p><button type="submit">登入</button></form><div id="login-challenge" aria-live="polite"></div>
+{% else %}<div class="empty"><h2>系統尚未初始化</h2><p>請先在這台主機執行 <code>ecourse init</code>，再重新整理。</p></div>{% endif %}
+</main><script src="/static/app.js" defer></script></body></html>

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block action %}<button data-action="sync">{{ t('更新課程') }}</button>{% endblock %}
+{% block content %}
+<a class="course-back" href="/courses">← {{ t('全部課程') }}</a>
+
+
+<section class="course-hero">
+  <div><span class="badge">{{ data.get('course_code') or t('課號待確認') }}</span><h2>{{ data.get('display_name') or t('未命名課程') }}</h2><p class="fine">{{ data.get('term') or t('學期未提供') }}</p></div>
+  <a class="button secondary" href="/todos?course={{ data.get('id') }}">{{ t('只看這門課的待辦') }}</a>
+</section>
+
+<details class="panel source-settings" {{ 'open' if data.get('selection_required') }}><summary>{{ t('課程資料來源') }}{% if data.get('selection_required') %} · {{ t('待設定') }}{% endif %}</summary>
+<p class="fine">{{ t('選擇一個來源，或選擇「無」停用這門課的線上資料。') }}</p>
+<div class="source-options">
+{% for source in data.get('sources',[]) %}<button class="source-option {{ 'selected' if source.get('selection_state') == 'selected' else 'secondary' }}" data-action="course-selection" data-course="{{ data.get('id') }}" data-source="{{ source.get('id') }}" data-version="{{ source.get('preference_version',1) }}" data-state="selected" aria-pressed="{{ 'true' if source.get('selection_state') == 'selected' else 'false' }}"><span>{{ 'eLearn' if source.get('platform') == 'elearn' else 'eeclass' }}</span><small>{{ t('目前使用') if source.get('selection_state') == 'selected' else t('使用此來源') }}</small></button>{% endfor %}
+{% if data.get('sources') %}{% set source=data.get('sources')[0] %}<button class="source-option {{ 'selected' if data.get('disabled') else 'secondary' }}" data-action="course-selection" data-course="{{ data.get('id') }}" data-source="{{ source.get('id') }}" data-version="{{ source.get('preference_version',1) }}" data-state="none" aria-pressed="{{ 'true' if data.get('disabled') else 'false' }}"><span>{{ t('無') }}</span><small>{{ t('不使用線上平台') }}</small></button>{% endif %}
+</div></details>
+
+{% if data.get('selection_required') %}<div class="callout"><strong>{{ t('請先選擇課程資料來源') }}</strong><p>{{ t('選擇後就會在這裡顯示教材、作業與成績。') }}</p></div>{% endif %}
+
+<nav class="course-tabs" aria-label="{{ t('課程內容') }}">
+  <a href="#materials">{{ t('教材') }} <span>{{ data.get('materials',[])|length }}</span></a>
+  <a href="#assignments">{{ t('作業與測驗') }} <span>{{ data.get('items',[])|length }}</span></a>
+  <a href="#grades">{{ t('成績') }} <span>{{ data.get('grades',[])|length }}</span></a>
+  <a href="#announcements">{{ t('公告') }} <span>{{ data.get('announcements',[])|length }}</span></a>
+</nav>
+
+<section class="panel course-section" id="materials"><header><div><h2>{{ t('教材') }}</h2><p>{{ t('在這裡瀏覽所有已同步的教材，並使用已登入狀態開啟或下載。') }}</p></div></header>
+{% for material in data.get('materials',[]) %}<article class="row resource-row"><div><strong>{{ material.get('title') }}</strong><small>{{ material.get('section_title') or t('未分類') }} · {{ material.get('kind') or t('教材') }} · {{ 'eLearn' if material.get('platform') == 'elearn' else 'eeclass' }}</small></div>{% if material.get('external_url') %}<button class="secondary" data-action="open-platform" data-platform="{{ material.get('platform') }}" data-target-url="{{ material.get('external_url') }}">{{ t('開啟／下載') }}</button>{% endif %}</article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的教材。') }}</p></div>{% endfor %}
+</section>
+
+<section class="panel course-section" id="assignments"><header><div><h2>{{ t('作業與測驗') }}</h2><p>{{ t('查看期限、繳交狀態與題目內容。') }}</p></div></header>
+{% for item in data.get('items',[]) %}<article class="row"><div><a href="/items/{{ item.get('id') }}"><strong>{{ item.get('title') }}</strong></a><small>{{ t('測驗') if item.get('kind') == 'quiz' else t('作業') }} · {{ (item.get('due_at') or item.get('closes_at') or item.get('due_date'))|taipei if (item.get('due_at') or item.get('closes_at') or item.get('due_date')) else t('期限未提供') }}</small></div><div class="actions">{% if item.get('grade_text') %}<span class="grade">{{ item.get('grade_text') }}</span>{% endif %}<span class="badge">{{ item.get('remote_status_text') or t('狀態待確認') }}</span></div></article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的作業或測驗。') }}</p></div>{% endfor %}
+</section>
+
+<section class="panel course-section" id="grades"><header><div><h2>{{ t('成績') }}</h2><p>{{ t('直接查看已公布的成績與評分狀態。') }}</p></div></header>
+{% for item in data.get('grades',[]) %}<article class="row"><div><a href="/items/{{ item.get('id') }}"><strong>{{ item.get('title') }}</strong></a><small>{{ item.get('grading_status_text') or item.get('remote_status_text') or t('已同步') }}</small></div><span class="grade">{{ item.get('grade_text') or t('尚未公布') }}</span></article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已公布的成績。') }}</p></div>{% endfor %}
+</section>
+
+<section class="panel course-section" id="announcements"><header><div><h2>{{ t('公告') }}</h2><p>{{ t('點開公告就能直接在這裡閱讀全文。') }}</p></div></header>{% for announcement in data.get('announcements',[]) %}<details class="announcement-card"><summary><span><strong>{{ announcement.get('title') }}</strong><small>{{ announcement.get('published_at')|taipei if announcement.get('published_at') else t('發布時間未提供') }}</small></span></summary><div class="announcement-body">{% if announcement.get('body_sanitized') %}<p class="preserve">{{ announcement.get('body_sanitized') }}</p>{% else %}<p class="muted">{{ t('全文尚未同步，請先按「更新課程」。') }}</p>{% endif %}<div class="actions"><a class="button secondary" href="/announcements/{{ announcement.get('id') }}">{{ t('單獨開啟公告') }}</a>{% if announcement.get('external_url') %}<button class="secondary" data-action="open-platform" data-platform="{{ announcement.get('platform') }}" data-target-url="{{ announcement.get('external_url') }}">{{ t('備用：開啟原平台') }}</button>{% endif %}</div></div></details>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的公告。') }}</p></div>{% endfor %}</section>
+
+
+{% endblock %}

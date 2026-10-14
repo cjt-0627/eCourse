@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block action %}<button data-dialog="event-dialog">{{ t('新增考試／事件') }}</button>{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <label>{{ t('搜尋') }}<input id="todo-search" placeholder="{{ t('標題或課程') }}"></label>
+  <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}">{{ course.get('display_name') }}</option>{% endfor %}</select></label>
+  <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="">{{ t('全部') }}</option><option value="unsubmitted">{{ t('未繳交') }}</option><option value="submitted">{{ t('已繳交') }}</option><option value="unknown">{{ t('待確認') }}</option></select></label>
+</div>
+<section class="panel" id="todo-list">
+{% for item in data.get('items',[]) %}
+  <article class="row todo" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ item.get('course_name','') }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}">
+    <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認')) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') == 'unsubmitted' else '') }}</span>
+    <div class="todo-main">
+      <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
+      <small>{{ item.get('course_name') or t('手動事件') }} · {{ item.get('display_at')|taipei if item.get('display_at') else t('期限未提供') }}</small>
+      {% if item.get('manual') %}
+        <small>{{ t('手動建立的考試／事件') }}</small>
+      {% else %}
+        <small class="submission-label {{ item.get('submission_state','unknown') }}">{{ t('已繳交') if item.get('submitted') else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('待確認')) }}</small>
+        <small>{{ t('來源：') }}{{ item.get('platform') }}{% if item.get('remote_status_text') %} · {{ t('校方狀態：') }}{{ item.get('remote_status_text') }}{% endif %}{% if item.get('grade_text') %} · {{ t('成績：') }}{{ item.get('grade_text') }}{% endif %}</small>
+      {% endif %}
+    </div>
+    <div class="actions">
+      {% if item.get('manual') %}
+        <button class="secondary" data-action="edit-event" data-id="{{ item.get('id') }}" data-title="{{ item.get('title') }}" data-precision="{{ item.get('date_precision') }}" data-starts="{{ item.get('starts_at') or '' }}" data-date="{{ item.get('event_date') or '' }}">{{ t('編輯') }}</button>
+        <button class="secondary" data-action="delete-event" data-id="{{ item.get('id') }}">{{ t('刪除') }}</button>
+      {% elif item.get('grade_text') %}<span class="grade">{{ item.get('grade_text') }}</span>{% endif %}
+    </div>
+  </article>
+{% else %}
+  <div class="empty"><p>{{ t('目前沒有待辦。') }}</p></div>
+{% endfor %}
+  <div class="empty" id="todo-filter-empty" hidden><p>{{ t('沒有符合目前篩選條件的待辦。') }}</p></div>
+</section>
+<dialog id="event-dialog">
+  <form id="event-form">
+    <header><h2>{{ t('新增手動事件') }}</h2><button type="button" class="icon" data-close>×</button></header>
+    <label>{{ t('標題') }}<input name="title" required maxlength="300"></label>
+    <label>{{ t('日期精度') }}<select name="date_precision"><option value="exact">{{ t('日期與時間') }}</option><option value="date_only">{{ t('只有日期') }}</option><option value="unknown">{{ t('尚未確定') }}</option></select></label>
+    <label>{{ t('日期時間') }}<input name="starts_at" type="datetime-local"></label>
+    <label>{{ t('只有日期') }}<input name="event_date" type="date"></label>
+    <footer><button type="button" class="secondary" data-close>{{ t('取消') }}</button><button type="submit">{{ t('儲存') }}</button></footer>
+  </form>
+</dialog>
+{% endblock %}

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "eCourse 已登入平台开启器",
+  "version": "0.1.11",
+  "description": "将 eCourse 维护的 eLearn／eeclass 登录状态安全交接到目前的 Brave 视窗。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAszMiEOlcuUilFPJmlLFOfy8Z63B/DoULG4fl72lbOkQUxAU8I2GkkHDigmFdHoxaCEmEeVTRqPf7r8w+QGIO2IqvQSqIjfbVzbsV+SZ0/VB2yQDY8soRUWO/YvxTTdaph5hvmfQHrmtInHyUOV9tELQ2DYR/oaRUwLwax/c+bRBf/lqP3Krj7Q0E8GF2x68ruDSA7ct6Cba6roXDtcQfQ4yfKRbYX3UZV0RBLvi8mzdA9c4jktuUVPzlFURHr9OU6fDv553DnN3scNkl0fk3S2ADpWAmdeDQSWveS+1OJicOSnN/kBMXPNEstYSBgsxFVQKHWEO0Lxq06NXDi+ItJQIDAQAB",
+  "permissions": ["cookies", "tabs"],
+  "host_permissions": [
+    "http://localhost:8765/*",
+    "http://127.0.0.1:8765/*",
+    "https://elearn.nthu.edu.tw/*",
+    "https://eeclass.nthu.edu.tw/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:8765/*", "http://127.0.0.1:8765/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "eCourse 已登入平台开启器"
+  }
+}

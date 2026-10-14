@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block action %}<button data-action="sync">{{ t('更新課程') }}</button>{% endblock %}
+{% block content %}
+{% set rows=data.get('courses',[]) if data else [] %}
+<div class="course-toolbar"><div><strong>{{ rows|length }} {{ t('門課程') }}</strong><p class="fine">{{ t('點選課程查看內容與設定來源。拖曳把手可排序，也可聚焦把手後按方向鍵。') }}</p></div><span class="fine">{{ t('排序儲存在此瀏覽器') }}</span></div>
+<section class="course-grid" data-course-grid data-owner="{{ user.id }}" aria-label="{{ t('全部課程') }}">
+{% for course in rows %}
+<article class="course-card course-tile {{ 'needs-selection' if course.get('selection_required') }}" data-course-id="{{ course.get('id') }}">
+  <button type="button" class="course-drag secondary" aria-label="{{ t('調整排序') }}：{{ course.get('display_name') }}" title="{{ t('拖曳或按方向鍵調整排序') }}">⠿</button>
+  <a class="course-tile-link" href="/courses/{{ course.get('id') }}">
+    <span class="course-code">{{ course.get('course_code') or t('課號待確認') }}</span>
+    <h2 title="{{ course.get('display_name') or course.get('name') or t('未命名課程') }}">{{ course.get('display_name') or course.get('name') or t('未命名課程') }}</h2>
+    <span class="course-meta">{% if course.get('selection_required') %}<span class="badge error">{{ t('待設定') }}</span>{% elif course.get('disabled') %}{{ t('不使用線上平台') }}{% else %}{% for source in course.get('sources',[]) if source.get('selection_state') == 'selected' %}{{ 'eLearn' if source.get('platform') == 'elearn' else 'eeclass' }}{% endfor %}{% endif %}{% if course.get('term') %}<span>{{ course.get('term') }}</span>{% endif %}</span>
+    {% if course.get('selection_required') %}<p class="course-setup-hint">{{ t('選擇資料來源後，即可查看教材與待辦。') }}</p><span class="course-setup-link">{{ t('設定課程') }} →</span>{% endif %}
+  </a>
+</article>
+{% else %}<div class="empty"><h2>{{ t('正在取得課程') }}</h2><p>{{ t('登入後首次同步會讀取 eLearn 與 eeclass 的課程清單。') }}</p><a class="button" href="/">{{ t('回總覽查看同步狀態') }}</a></div>{% endfor %}
+</section>
+<p class="fine" data-sort-status role="status" aria-live="polite"></p>
+{% endblock %}
