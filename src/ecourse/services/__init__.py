@@ -75,6 +75,18 @@ class Service:
         self.ipc_client = ipc_client
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
+    def _worker_healthy(self, session) -> bool:
+        heartbeat = session.scalar(select(m.WorkerHeartbeat).order_by(m.WorkerHeartbeat.last_seen_at.desc()))
+        if heartbeat is None:
+            return False
+        last_seen = heartbeat.last_seen_at
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return now - last_seen <= timedelta(seconds=90)
+
     def dashboard(self, owner_id: str) -> dict:
         now = self.clock()
         with self.db.session() as session:
@@ -272,7 +284,9 @@ class Service:
             if not connection or connection.generation != attempt.generation:
                 raise GoneError("登入交易已失效。")
             result = _dict(attempt, exclude=("owner_id", "connection_id"))
-            result["challenge_available"] = attempt.state == "challenge_required" and self._ipc_client() is not None
+            worker_available = self._worker_healthy(session)
+            result["worker_available"] = worker_available
+            result["challenge_available"] = attempt.state == "challenge_required" and worker_available and self._ipc_client() is not None
             return result
 
     async def get_challenge_image(self, owner_id: str, attempt_id: str) -> bytes:
@@ -302,8 +316,20 @@ class Service:
             connection = session.scalar(select(m.PlatformConnection).where(m.PlatformConnection.owner_id == owner_id, m.PlatformConnection.platform == platform))
             if not connection or not connection.credential_id:
                 raise NotFoundError("找不到可重試的連線。")
+            if not self._worker_healthy(session):
+                raise ServiceUnavailableError("背景 worker 已停止；請重新啟動 eCourse 後再重試。")
             active = session.scalar(select(m.LoginAttempt).where(m.LoginAttempt.connection_id == connection.id, m.LoginAttempt.generation == connection.generation, m.LoginAttempt.state.in_(("queued", "authenticating", "challenge_required"))).order_by(m.LoginAttempt.created_at.desc()))
             if active:
+                queued_job = session.scalar(select(m.SyncJob).where(
+                    m.SyncJob.connection_id == connection.id,
+                    m.SyncJob.generation == connection.generation,
+                    m.SyncJob.state == "queued",
+                ).order_by(m.SyncJob.scheduled_at.desc()))
+                if queued_job:
+                    queued_job.scheduled_at = self.clock()
+                    queued_job.error_code = None
+                    queued_job.lease_owner = queued_job.lease_until = None
+                    connection.auth_state, connection.error_code = "authenticating", None
                 return {"attempt_id": active.id, "connection": self._connection(connection)}
             connection.generation += 1
             connection.auth_state, connection.error_code = "authenticating", None
@@ -415,10 +441,21 @@ class Service:
                     "selection_state": selection.selection_state,
                     "preference_version": selection.preference_version,
                 } for source, selection, connection in sources]
+                selected_source = next(
+                    (source for source in item["sources"] if source["selection_state"] == "selected"),
+                    None,
+                )
+                item["display_platform"] = (
+                    selected_source["platform"]
+                    if selected_source
+                    else (item["sources"][0]["platform"] if item["sources"] else "eeclass")
+                )
                 selected_count = sum(source["selection_state"] == "selected" for source in item["sources"])
                 item["disabled"] = bool(item["sources"]) and all(
                     source["selection_state"] == "disabled" for source in item["sources"]
                 )
+                if item["disabled"]:
+                    item["display_platform"] = "disabled"
                 item["selection_required"] = bool(item["sources"]) and selected_count != 1 and not item["disabled"]
                 result.append(item)
             return result
@@ -830,7 +867,7 @@ class Service:
             last_seen = heartbeat.last_seen_at if heartbeat else None
             if last_seen and last_seen.tzinfo is None:
                 last_seen = last_seen.replace(tzinfo=timezone.utc)
-            return {"database": "ready" if self.db.ready() else "not_ready", "worker": "healthy" if last_seen and now - last_seen <= timedelta(seconds=90) else "stopped", "worker_last_seen_at": _iso(last_seen), "active_job_count": heartbeat.active_job_count if heartbeat else 0, "pending_jobs": pending}
+            return {"database": "ready" if self.db.ready() else "not_ready", "worker": "healthy" if self._worker_healthy(session) else "stopped", "worker_last_seen_at": _iso(last_seen), "active_job_count": heartbeat.active_job_count if heartbeat else 0, "pending_jobs": pending}
 
 
 __all__ = ["ConflictError", "GoneError", "NotFoundError", "Service", "ServiceError", "ServiceUnavailableError", "ValidationError"]

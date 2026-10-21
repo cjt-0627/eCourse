@@ -68,7 +68,19 @@ class OAuthCaptchaSolver:
         try:
             async with self._lock:
                 pixels = await image_locator.evaluate(
-                    """image => {
+                    """async image => {
+                        if (!image.complete || !image.naturalWidth || !image.naturalHeight) {
+                            await new Promise((resolve, reject) => {
+                                const loaded = () => { cleanup(); resolve(); };
+                                const failed = () => { cleanup(); reject(new Error('captcha image failed to load')); };
+                                const cleanup = () => {
+                                    image.removeEventListener('load', loaded);
+                                    image.removeEventListener('error', failed);
+                                };
+                                image.addEventListener('load', loaded, {once: true});
+                                image.addEventListener('error', failed, {once: true});
+                            });
+                        }
                         const width = image.naturalWidth;
                         const height = image.naturalHeight;
                         if (!width || !height) throw new Error('captcha image is not decoded');

@@ -155,6 +155,35 @@ class ElearnAdapter(NthuSsoMixin):
                     return FetchResult((), (), False, ("parser_changed",))
             if await _catalog_has_more(page):
                 return FetchResult(courses, ("course_catalog_page",), False, ("course_catalog_pagination_not_expanded",))
+            enriched_courses = []
+            for course in courses:
+                if "[元課程]" not in course.title or not _is_truncated_title(course.title):
+                    enriched_courses.append(course)
+                    continue
+                detail_page = await context.new_page()
+                detail_page.set_default_timeout(self.timeout_ms)
+                try:
+                    await self._goto(detail_page, course.url)
+                    headings = detail_page.locator(
+                        "[data-region='page-context-header'] h1, .page-header-headings h1, "
+                        "#page-header h1, main h1"
+                    )
+                    candidates = [await headings.nth(index).inner_text() for index in range(await headings.count())]
+                    candidates.append(await detail_page.title())
+                    complete_title = next(
+                        (
+                            cleaned for candidate in candidates
+                            if (cleaned := _clean_elearn_meta_course_title(candidate))
+                            and not _is_truncated_title(cleaned)
+                        ),
+                        None,
+                    )
+                    enriched_courses.append(replace(course, title=complete_title) if complete_title else course)
+                except (PlaywrightError, ValueError):
+                    enriched_courses.append(course)
+                finally:
+                    await detail_page.close()
+            courses = tuple(enriched_courses)
             return FetchResult(courses, ("course_catalog",), True)
         except PlaywrightTimeoutError:
             return FetchResult((), (), False, ("upstream_timeout",))
@@ -360,6 +389,24 @@ class ElearnAdapter(NthuSsoMixin):
             return FetchResult((), (), False, ("unexpected_redirect",))
         finally:
             await context.close()
+
+
+def _is_truncated_title(title: str) -> bool:
+    return title.rstrip().endswith(("...", "…"))
+
+
+def _clean_elearn_meta_course_title(title: str) -> str:
+    """Remove the leading course code while preserving Moodle's meta-course label."""
+    value = " ".join(title.split()).strip()
+    value = re.sub(r"^(?:課程|Course)\s*[:：]\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"^(?:\d{5}\s*)?[A-Z]{2,6}\s*\d{4,6}(?:-\d{1,2})?\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"\s*(?:\||·|-)\s*eLearn\s*$", "", value, flags=re.IGNORECASE)
+    return value.strip()
 
 
 def create_adapter(browser: Browser, captcha_solver: CaptchaSolver | None = None) -> ElearnAdapter:

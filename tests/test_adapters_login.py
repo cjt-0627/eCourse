@@ -121,6 +121,45 @@ def test_automatic_captcha_refresh_is_bounded_before_manual_fallback() -> None:
     assert attempt.submissions == 0
 
 
+def test_rejected_automatic_captcha_uses_fresh_sso_image_once_more() -> None:
+    class Adapter(NthuSsoMixin):
+        answers = []
+        solve_rounds = 1
+
+        async def answer_challenge(self, attempt_id, challenge_id, answer, request_id=None):
+            self.answers.append((attempt_id, challenge_id, answer))
+            if len(self.answers) == 1:
+                self._attempts[attempt_id].challenge_id = "challenge-2"
+                return LoginResult(
+                    AdapterStatus.CHALLENGE_REQUIRED,
+                    attempt_id=attempt_id,
+                    challenge=LoginChallenge(
+                        "challenge-2", "image_captcha", b"fresh-image",
+                        datetime.now(UTC) + timedelta(minutes=5),
+                    ),
+                    error_code="captcha_rejected",
+                )
+            return LoginResult(AdapterStatus.CONNECTED, storage_state={"cookies": []})
+
+        async def _automatic_captcha_with_refresh(self, attempt, image, image_locator):
+            self.solve_rounds += 1
+            return (("1111" if self.solve_rounds == 1 else "2222"), image)
+
+    adapter = Adapter(browser=object())
+    attempt = LoginAttempt(
+        "attempt", "challenge-1", "eeclass", "account", "password", 1,
+        object(), object(), datetime.now(UTC) + timedelta(minutes=5),
+    )
+    adapter._attempts[attempt.attempt_id] = attempt
+
+    result = asyncio.run(adapter._answer_automatic_captcha(attempt, "1111", object()))
+    assert result.status == AdapterStatus.CONNECTED
+    assert adapter.answers == [
+        ("attempt", "challenge-1", "1111"),
+        ("attempt", "challenge-2", "2222"),
+    ]
+
+
 def test_automatic_solver_prefers_natural_page_pixels_when_supported() -> None:
     from ecourse.adapters.base import CaptchaSolution
 

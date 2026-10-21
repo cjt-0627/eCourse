@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from ecourse.db.models import Announcement, CourseGroup, CourseMaterial, CourseSelection, CourseSource, CredentialSecret, LearningItem, LoginAttempt, PlatformConnection, ScheduleState, SessionState, SyncJob
+from ecourse.db.models import Announcement, CourseGroup, CourseMaterial, CourseSelection, CourseSource, CredentialSecret, LearningItem, LoginAttempt, PlatformConnection, ScheduleState, SessionState, SyncJob, WorkerHeartbeat
 from ecourse.ipc import IPCError
-from ecourse.services import Service
+from ecourse.services import Service, ServiceUnavailableError
 from ecourse.worker import Worker
 from ecourse.adapters.base import Course, CourseItem, FetchResult, ItemDetail
 
@@ -388,12 +388,65 @@ def test_retry_connection_invalidates_old_session_before_new_login(backend):
     with db.session() as session:
         for attempt in session.scalars(select(LoginAttempt).where(LoginAttempt.connection_id == connection_id)):
             attempt.state = "failed"
+        session.add(WorkerHeartbeat(worker_id="live-worker", version="test", last_seen_at=datetime.now(UTC)))
 
     changed = service.retry_connection(owner.id, "elearn")
 
     assert changed["connection"]["generation"] == generation + 1
     with db.session() as session:
         assert session.get(SessionState, connection_id) is None
+
+
+def test_retry_connection_rejects_when_worker_is_stopped(backend):
+    settings, db, owner = backend
+    service, public, _job = _connection_job(settings, db, owner)
+    with db.session() as session:
+        for attempt in session.scalars(select(LoginAttempt).where(LoginAttempt.connection_id == public["connection"]["id"])):
+            attempt.state = "failed"
+
+    with pytest.raises(ServiceUnavailableError) as error:
+        service.retry_connection(owner.id, "elearn")
+
+    assert getattr(error.value, "code", None) == "service_unavailable"
+    with db.session() as session:
+        connection = session.get(PlatformConnection, public["connection"]["id"])
+        assert connection.generation == public["connection"]["generation"]
+
+
+def test_login_attempt_reports_stopped_worker(backend):
+    settings, _db, owner = backend
+    service, public, _job = _connection_job(settings, _db, owner)
+
+    attempt = service.get_login_attempt(owner.id, public["attempt_id"])
+
+    assert attempt["state"] == "queued"
+    assert attempt["worker_available"] is False
+    assert attempt["challenge_available"] is False
+
+
+def test_retry_connection_wakes_queued_backoff_when_worker_is_healthy(backend):
+    settings, db, owner = backend
+    now = datetime.now(UTC)
+    service, public, job = _connection_job(settings, db, owner)
+    with db.session() as session:
+        session.add(WorkerHeartbeat(worker_id="live-worker", version="test", last_seen_at=now))
+        queued = session.get(SyncJob, job["id"])
+        queued.scheduled_at = now + timedelta(minutes=15)
+        queued.error_code = "upstream_timeout"
+        connection = session.get(PlatformConnection, public["connection"]["id"])
+        connection.auth_state = "temporarily_unavailable"
+        connection.error_code = "upstream_timeout"
+
+    result = service.retry_connection(owner.id, "elearn")
+
+    assert result["attempt_id"] == public["attempt_id"]
+    with db.session() as session:
+        queued = session.get(SyncJob, job["id"])
+        connection = session.get(PlatformConnection, public["connection"]["id"])
+        assert queued.scheduled_at <= datetime.now(UTC)
+        assert queued.error_code is None
+        assert connection.auth_state == "authenticating"
+        assert connection.error_code is None
 
 
 def test_same_account_password_change_preserves_courses_and_preferences(backend):

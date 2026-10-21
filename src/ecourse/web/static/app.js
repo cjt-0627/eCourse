@@ -6,6 +6,7 @@ const englishMessages = {
   "提交驗證碼": "Submit code", "換一張": "New image", "答案已送出，正在驗證…": "Answer sent. Verifying…",
   "自動辨識未完成，請輸入圖片中的驗證碼。": "Automatic recognition was incomplete. Enter the code shown in the image.",
   "登入完成，資料同步已繼續。": "Signed in. Data sync has resumed.", "正在登入，自動辨識驗證碼中…": "Signing in and recognizing the verification code…",
+  "背景同步已停止，請重新啟動 eCourse 後再重試。": "Background sync has stopped. Restart eCourse, then try again.",
   "目前沒有可同步的平台。": "There are no platforms available to sync.", "同步進行中；首次抓取所有課程可能需要幾分鐘…": "Syncing. The first full course fetch may take a few minutes…",
   "同步正在等待驗證碼，請到連接設定完成驗證。": "Sync is waiting for a verification code. Complete verification in Connection settings.", "前往連接設定": "Open Connection settings",
   "同步未完成，請查看系統狀態。": "Sync did not complete. Check System status.", "同步部分完成，部分資料未能更新。": "Sync partially completed; some data could not be updated.", "同步完成。": "Sync complete.",
@@ -188,6 +189,10 @@ async function watchAttempt(attemptId, platform, token) {
       if (attemptTokens.get(platform) !== token) return;
       const attempt = await api(`/api/v1/login-attempts/${encodeURIComponent(attemptId)}`);
       if (attemptTokens.get(platform) !== token) return;
+      if (attempt.worker_available === false && ["queued", "authenticating", "challenge_required"].includes(attempt.state)) {
+        challengeText(platform, tr("背景同步已停止，請重新啟動 eCourse 後再重試。"));
+        return;
+      }
       if (attempt.state === "challenge_required") {
         renderChallenge(attemptId, platform);
         const box = challengeBox(platform);
@@ -365,7 +370,7 @@ document.addEventListener("click", async event => {
         await api(`/api/v1/courses/${encodeURIComponent(button.dataset.course)}/selection`, {method: "PUT", body: JSON.stringify({source_id: source.dataset.noneSource, selection_state: "disabled", expected_version: Number(source.dataset.version)})});
       }
       location.reload();
-    } else if (action === "course-selection") { await api(`/api/v1/courses/${encodeURIComponent(button.dataset.course)}/selection`, {method: "PUT", body: JSON.stringify({source_id: button.dataset.source, selection_state: button.dataset.state, expected_version: Number(button.dataset.version)})}); location.reload(); }
+    } else if (action === "course-selection") { await api(`/api/v1/courses/${encodeURIComponent(button.dataset.course)}/selection`, {method: "PUT", body: JSON.stringify({source_id: button.dataset.source, selection_state: button.dataset.state, expected_version: Number(button.dataset.version)})}); location.assign(`/courses/${encodeURIComponent(button.dataset.course)}`); }
     else if (action === "read-notification") { await api(`/api/v1/notifications/${encodeURIComponent(button.dataset.id)}/read`, {method: "PUT", body: "{}"}); location.reload(); }
     else if (action === "read-announcement") { await api(`/api/v1/announcements/${encodeURIComponent(button.dataset.id)}/read`, {method: "PUT", body: "{}"}); notice("公告已標為已讀。"); }
     else if (action === "delete-event" && confirm("確定刪除這個手動事件？")) { await api(`/api/v1/manual-events/${encodeURIComponent(button.dataset.id)}`, {method: "DELETE"}); location.reload(); }
@@ -454,8 +459,8 @@ if (courseGrid) {
     const saved = JSON.parse(localStorage.getItem(key) || '[]');
     if (Array.isArray(saved)) {
       const current = new Map(cards().map(card => [card.dataset.courseId, card]));
-      saved.forEach(id => { if (current.has(id)) { courseGrid.append(current.get(id)); current.delete(id); } });
-      current.forEach(card => courseGrid.append(card));
+      saved.forEach(id => { if (current.has(id)) { const card=current.get(id);courseGrid.querySelector(`[data-course-lane="${CSS.escape(card.dataset.platform)}"]`)?.append(card);current.delete(id); } });
+      current.forEach(card => courseGrid.querySelector(`[data-course-lane="${CSS.escape(card.dataset.platform)}"]`)?.append(card));
     }
   } catch {}
   const save = card => {
@@ -475,17 +480,19 @@ if (courseGrid) {
     if (!['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home','End'].includes(event.key) || drag) return;
     event.preventDefault();
     const card = handle.closest('[data-course-id]');
-    const rows = cards(), index = rows.indexOf(card);
+    const lane = card.closest('[data-course-lane]');
+    const rows = [...lane.querySelectorAll('[data-course-id]')], index = rows.indexOf(card);
     const target = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : index + (['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1);
     if (target < 0 || target >= rows.length || target === index) return;
-    courseGrid.insertBefore(card, target > index ? rows[target].nextSibling : rows[target]);
+    lane.insertBefore(card, target > index ? rows[target].nextSibling : rows[target]);
     handle.focus(); save(card);
   });
   courseGrid.addEventListener('pointerdown', event => {
     const handle = event.target.closest('.course-drag');
     if (!handle || event.button !== 0 || drag) return;
     event.preventDefault(); handle.focus();
-    drag = {card: handle.closest('[data-course-id]'), handle, id: event.pointerId, original: cards(), x:event.clientX, y:event.clientY, moved:false};
+    const card = handle.closest('[data-course-id]');
+    drag = {card, handle, id: event.pointerId, lane:card.closest('[data-course-lane]'), original:[...card.closest('[data-course-lane]').querySelectorAll('[data-course-id]')], x:event.clientX, y:event.clientY, moved:false};
     // Capture on the stable grid; moving a card must not interrupt the pointer stream.
     courseGrid.setPointerCapture(event.pointerId);
   });
@@ -496,14 +503,14 @@ if (courseGrid) {
     if(event.clientY > window.innerHeight - 65) window.scrollBy(0, 18);
     if(event.clientY < 65) window.scrollBy(0, -18);
     const target = document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-course-id]');
-    if (!target || target === drag.card || !courseGrid.contains(target)) return;
-    const rows=cards();
-    courseGrid.insertBefore(drag.card, rows.indexOf(target)>rows.indexOf(drag.card) ? target.nextSibling : target);
+    if (!target || target === drag.card || target.closest('[data-course-lane]') !== drag.lane) return;
+    const rows=[...drag.lane.querySelectorAll('[data-course-id]')];
+    drag.lane.insertBefore(drag.card, rows.indexOf(target)>rows.indexOf(drag.card) ? target.nextSibling : target);
   });
   function finish(cancel = false) {
     if (!drag) return;
     const current = drag; drag = null;
-    if (cancel) current.original.forEach(card => courseGrid.append(card));
+    if (cancel) current.original.forEach(card => current.lane.append(card));
     current.card.classList.remove('sorting');
     if (courseGrid.hasPointerCapture(current.id)) courseGrid.releasePointerCapture(current.id);
     current.handle.focus({preventScroll:true});

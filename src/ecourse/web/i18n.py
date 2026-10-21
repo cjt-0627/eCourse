@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
+
 
 SUPPORTED_LOCALES = {"zh-Hant", "en"}
 
 # Traditional Chinese is the source language. Keeping the source text as the key
 # makes untranslated copy fall back safely instead of exposing an internal key.
 EN = {
+    "課程設定": "Course settings",
     '門課程': 'courses',
     '點選課程查看內容與設定來源。拖曳把手可排序，也可聚焦把手後按方向鍵。': 'Open a course for content and source settings. Drag its handle or focus it and use arrow keys to reorder.',
     '排序儲存在此瀏覽器': 'Order saved in this browser',
@@ -66,3 +69,35 @@ def translator(locale: str | None):
         return EN.get(text, text) if selected == "en" else text
 
     return translate
+
+
+def localized_course_name(name: str | None, locale: str | None, course_code: str | None = None) -> str:
+    """Return only the course name for the selected interface language."""
+    if not name:
+        return ""
+
+    value = " ".join(str(name).split()).strip()
+    if course_code:
+        flexible_code = r"\s*".join(re.escape(character) for character in course_code)
+        value = re.sub(rf"(?:\s*[_\-–—]\s*)?{flexible_code}(?:-\d{{1,2}})?\s*$", "", value, flags=re.IGNORECASE)
+        value = re.sub(rf"^{flexible_code}(?:-\d{{1,2}})?(?:\s*[_\-–—]\s*)?", "", value, flags=re.IGNORECASE)
+    else:
+        # Older records may not have a separately stored code yet, while their
+        # imported title still carries one after an underscore.
+        value = re.sub(r"\s*_\s*(?:\d{5}\s*)?[A-Za-z]{2,6}\s*\d{3,6}(?:-\d{1,2})?\s*$", "", value)
+
+    value = value.strip(" _-–—")
+    han_positions = [match.start() for match in re.finditer(r"[\u3400-\u9fff]", value)]
+    if not han_positions:
+        return value
+
+    english = re.search(r"[A-Za-z]", value[han_positions[-1] + 1 :])
+    if not english:
+        return value
+
+    boundary = han_positions[-1] + 1 + english.start()
+    chinese_name = value[:boundary].strip(" _-–—")
+    english_name = value[boundary:].strip(" _-–—")
+    if len(english_name) <= 2:
+        return value
+    return english_name if normalize_locale(locale) == "en" and english_name else chinese_name

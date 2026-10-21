@@ -7,7 +7,7 @@ import pytest
 from ecourse.adapters.base import DatePrecision
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from ecourse.adapters.elearn import ElearnAdapter, _grade_text, _is_explicit_empty_catalog, _labeled_value, _quiz_status, _submission_status
+from ecourse.adapters.elearn import ElearnAdapter, _clean_elearn_meta_course_title, _grade_text, _is_explicit_empty_catalog, _labeled_value, _quiz_status, _submission_status
 from ecourse.adapters.eeclass import _labeled_value as _eeclass_labeled_value, _personal_status
 from ecourse.parsing import parse_course_content, parse_courses, parse_eeclass_activity_page, parse_moodle_forum_pages, parse_nthu_date
 from ecourse.parsing.html import normalize_course_code
@@ -119,6 +119,12 @@ def test_course_catalog_extracts_official_code_from_attributes_and_row_context()
     assert normalize_course_code("CHE 5001 分子工程") == "CHE5001"
     assert normalize_course_code("11510PHYS 113301-07 [元課程]") == "11510PHYS113301"
     assert normalize_course_code("2026 離散數學") is None
+
+
+def test_elearn_meta_course_uses_full_heading_and_keeps_meta_label() -> None:
+    assert _clean_elearn_meta_course_title(
+        "11510PHYS 113301-07 [元課程]普通物理B"
+    ) == "[元課程]普通物理B"
 
 
 def test_login_form_is_not_misread_as_empty_catalog() -> None:

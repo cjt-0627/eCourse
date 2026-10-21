@@ -13,6 +13,7 @@ from ecourse.db.models import Announcement, CourseGroup, CourseMaterial, CourseS
 from ecourse.vault import initialize_key
 from ecourse.web import create_app
 from ecourse.web.app import _school_url, _taipei
+from ecourse.web.i18n import localized_course_name
 
 
 ORIGIN = "http://localhost:8765"
@@ -26,6 +27,14 @@ def test_external_url_allowlist_and_taipei_format():
     assert _school_url("https://elearn.nthu.edu.tw.evil.test/") is None
     assert _school_url("https://user@elearn.nthu.edu.tw/") is None
     assert _taipei("2026-10-06T01:30:00Z") == "2026-10-06 09:30"
+
+
+def test_course_name_follows_interface_language_and_hides_course_code():
+    title = "離散數學Discrete Mathematics_11510CS 135601"
+    assert localized_course_name(title, "zh-Hant", "11510CS135601") == "離散數學"
+    assert localized_course_name(title, "en", "11510CS135601") == "Discrete Mathematics"
+    assert localized_course_name(title, "en") == "Discrete Mathematics"
+    assert localized_course_name("11510PHYS 113301-07 [元課程]普通物理B", "zh-Hant", "11510PHYS113301") == "[元課程]普通物理B"
 
 
 @pytest.fixture
@@ -154,8 +163,27 @@ def test_course_source_selection_workflow(web):
     assert loaded["materials"][0]["title"] == "課程講義.pdf"
     assert loaded["grades"][0]["grade_text"] == "92 / 100"
     course_page = client.get(f"/courses/{group_id}").text
-    assert all(text in course_page for text in ("教材", "作業與測驗", "成績", "課程講義.pdf", "開學公告", "請於第一週完成課程分組。", "開啟／下載"))
+    assert all(text in course_page for text in ("教材", "作業與測驗", "成績", "課程講義.pdf", "開啟／下載"))
     assert 'data-target-url="https://elearn.nthu.edu.tw/mod/resource/view.php?id=9"' in course_page
+    assert "開學公告" not in course_page and "只有日期作業" not in course_page
+    assert 'href="#materials"' not in course_page
+    landing = client.get(f"/courses/{group_id}", follow_redirects=False)
+    assert landing.status_code == 303
+    assert landing.headers["location"] == f"/courses/{group_id}/materials"
+    for section, present, absent in (
+        ("materials", "課程講義.pdf", "開學公告"),
+        ("assignments", "只有日期作業", "課程講義.pdf"),
+        ("grades", "92 / 100", "開學公告"),
+        ("announcements", "請於第一週完成課程分組。", "課程講義.pdf"),
+        ("settings", 'data-state="none"', "課程講義.pdf"),
+    ):
+        response = client.get(f"/courses/{group_id}/{section}")
+        assert response.status_code == 200
+        assert present in response.text and absent not in response.text
+        assert f'href="/courses/{group_id}/{section}" class="active" aria-current="page"' in response.text
+    assert client.get(f"/courses/{group_id}/unknown").status_code == 404
+    assert client.get("/courses/missing/materials").status_code == 404
+
     item_detail = client.get(f"/items/{item_id}").text
     assert "期限日期" in item_detail and "2026-11-03" in item_detail
     assert 'data-action="open-platform"' in item_detail
@@ -181,7 +209,7 @@ def test_selecting_one_cross_platform_course_source_disables_the_other(web):
     with db.session() as session:
         elearn = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
         eeclass = PlatformConnection(owner_id=owner.id, platform="eeclass", auth_state="connected", generation=1)
-        group = CourseGroup(owner_id=owner.id, display_name="離散數學", course_code="11510CS135601")
+        group = CourseGroup(owner_id=owner.id, display_name="離散數學Discrete Mathematics_11510CS135601", course_code="11510CS135601")
         session.add_all((elearn, eeclass, group)); session.flush()
         first = CourseSource(owner_id=owner.id, connection_id=elearn.id, remote_course_id="e-1", course_code=group.course_code, title="離散數學")
         second = CourseSource(owner_id=owner.id, connection_id=eeclass.id, remote_course_id="c-1", course_code=group.course_code, title="離散數學")
@@ -191,26 +219,40 @@ def test_selecting_one_cross_platform_course_source_disables_the_other(web):
         session.add_all((first_selection, second_selection)); session.flush()
         group_id, first_id = group.id, first.id
     page = client.get("/courses").text
-    assert "11510CS135601" in page and "待設定" in page
+    assert "離散數學" in page and "Discrete Mathematics" not in page
+    assert "11510CS135601" not in page and "待設定" in page
     chosen = client.put(f"/api/v1/courses/{group_id}/selection", headers=headers, json={"source_id": first_id, "selection_state": "selected", "expected_version": 1})
     assert chosen.status_code == 200
     loaded = client.get(f"/api/v1/courses/{group_id}").json()["data"]
     states = {source["platform"]: source["selection_state"] for source in loaded["sources"]}
     assert states == {"elearn": "selected", "eeclass": "disabled"}
+    assert loaded["display_platform"] == "elearn"
     assert loaded["selection_required"] is False
 
     disabled = client.put(f"/api/v1/courses/{group_id}/selection", headers=headers, json={"source_id": first_id, "selection_state": "none", "expected_version": 2})
     assert disabled.status_code == 200
     loaded = client.get(f"/api/v1/courses/{group_id}").json()["data"]
     assert loaded["disabled"] is True
+    assert loaded["display_platform"] == "disabled"
     assert loaded["selection_required"] is False
     assert {source["selection_state"] for source in loaded["sources"]} == {"disabled"}
     page = client.get("/courses").text
+    from bs4 import BeautifulSoup
+    course_grid = BeautifulSoup(page, "html.parser")
+    assert course_grid.select_one('[data-course-lane="eeclass"]') is not None
+    assert course_grid.select_one('[data-course-lane="elearn"]') is not None
+    assert course_grid.select_one(f'[data-course-lane="disabled"] [data-course-id="{group_id}"]') is not None
     assert 'data-action="course-selection"' not in page
     assert "不使用線上平台" in page
     detail = client.get(f"/courses/{group_id}").text
     assert 'data-state="none"' in detail
     assert 'data-course-grid' in page
+
+    changed = client.put("/api/v1/settings/language", headers=headers, json={"locale": "en"})
+    assert changed.status_code == 200
+    english_page = client.get("/courses").text
+    assert "Discrete Mathematics" in english_page
+    assert "離散數學" not in english_page and "11510CS135601" not in english_page
 
 
 def test_taipei_time_editor_and_new_dialog_reset_are_shipped(web):
@@ -523,5 +565,5 @@ def test_course_overview_excludes_cached_platform_tutorial_and_marks_single_pend
     assert "影片製作" in page and "待設定" in page
     assert 'data-action="course-selection"' not in page
     detail = client.get(f"/courses/{course_id}").text
-    assert 'source-settings" open' in detail
+    assert 'section class="panel source-settings"' in detail
     assert 'data-state="none"' in detail

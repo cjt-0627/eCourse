@@ -44,7 +44,11 @@ class FakeBrowser:
 
 
 class FakeImageLocator:
+    expression = ""
+
     async def evaluate(self, expression):
+        self.expression = expression
+        assert "image.complete" in expression
         assert "naturalWidth" in expression
         assert "getImageData" in expression
         assert "predictRgbaWithConfidence" not in expression
@@ -94,13 +98,13 @@ def test_page_element_inference_uses_natural_pixels_without_screenshot_resamplin
         browser = FakeBrowser({})
         browser.page.result = {"candidate": "9001", "confidence": 0.996}
         solver = OAuthCaptchaSolver(browser)
-        result = await solver.solve_element(
-            browser.page, FakeImageLocator(),
-        )
+        locator = FakeImageLocator()
+        result = await solver.solve_element(browser.page, locator)
         await solver.close()
-        return browser, result
+        return browser, locator, result
 
-    browser, result = asyncio.run(scenario())
+    browser, locator, result = asyncio.run(scenario())
     assert result.candidate == "9001"
     assert result.confidence == 0.996
+    assert "addEventListener('load'" in locator.expression
     assert len(browser.page.scripts) == 2

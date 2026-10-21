@@ -29,7 +29,7 @@ from ecourse.db import Database
 from ecourse.db.models import AppSession, Owner, PlatformConnection, ScheduleState, SyncJob
 from ecourse.platforms import BRAVE_EXTENSION_ID
 from ecourse.services import Service, ServiceError
-from ecourse.web.i18n import normalize_locale, translator
+from ecourse.web.i18n import localized_course_name, normalize_locale, translator
 
 
 ROOT = Path(__file__).parent
@@ -530,6 +530,7 @@ def create_app(settings=None) -> FastAPI:
         return HTMLResponse(templates.get_template(template).render(
             title=t(title), active=active, data=data, user=auth[0],
             csrf_token=auth[1].csrf_token, locale=locale, t=t,
+            course_name=lambda name, code=None: localized_course_name(name, locale, code),
         ))
 
     def page(template: str, title: str, active: str, load):
@@ -626,14 +627,26 @@ def create_app(settings=None) -> FastAPI:
     def course_page(course_id: str, request: Request):
         auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))
         if auth is None: return RedirectResponse("/login", 303)
+        data = service.get_course(auth[0].id, course_id)
+        section = "settings" if data.get("selection_required") or data.get("disabled") else "materials"
+        return RedirectResponse(f"/courses/{course_id}/{section}", 303)
+
+    @app.get("/courses/{course_id}/{section}", response_class=HTMLResponse)
+    def course_section_page(course_id: str, section: str, request: Request):
+        auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))
+        if auth is None: return RedirectResponse("/login", 303)
+        titles = {"materials": "教材", "assignments": "作業與測驗", "grades": "成績", "announcements": "公告", "settings": "課程設定"}
+        if section not in titles:
+            raise HTTPException(status_code=404, detail="找不到課程頁面。")
         data = service.get_course_workspace(auth[0].id, course_id)
+        data["section"] = section
         for material in data.get("materials", []):
             material["external_url"] = _school_url(material.get("source_url"))
         for source in data.get("sources", []):
             source["external_url"] = _school_url(source.get("source_url"))
         for announcement in data.get("announcements", []):
             announcement["external_url"] = _school_url(announcement.get("source_url"))
-        return render("course_detail.html", title="課程詳情", active="courses", data=data, auth=auth)
+        return render("course_detail.html", title=titles[section], active="courses", data=data, auth=auth)
 
     @app.get("/items/{item_id}", response_class=HTMLResponse)
     def item_page(item_id: str, request: Request):

@@ -45,6 +45,14 @@ def _plain(value):
     return vars(value)
 
 
+def _course_title_quality(value: str) -> tuple[int, int]:
+    """Prefer complete platform titles even when an older truncated label is longer."""
+    penalty = 0
+    if value.rstrip().endswith(("...", "…")):
+        penalty += 2
+    return (-penalty, len(value))
+
+
 class Worker:
     def __init__(self, settings, *, adapters=None, adapter_loader=None, worker_id=None, clock=None,
                  version="0.1.0", retry_delays=(1, 5, 15), periodic_sync=True,
@@ -236,11 +244,15 @@ class Worker:
                 finally:
                     credentials.clear()
                 status = login.get("status")
-                if status == "challenge_required":
+                if status == "challenge_required" and login.get("challenge"):
                     self._record_challenge(connection.id, owner_id, job.generation, login)
                     self._finish(job.id, "waiting_user", "captcha_required")
                     return
                 if status not in {"connected", "success", "ok"} or not login.get("storage_state"):
+                    logging.warning(
+                        "platform login failed: platform=%s status=%s error=%s stage=%s",
+                        platform, status, login.get("error_code"), login.get("diagnostic_stage"),
+                    )
                     self._finish(job.id, "failed", login.get("error_code", "credentials_invalid"))
                     return
                 if connection.remote_account_id and login.get("remote_account_id") != connection.remote_account_id and connection.identity_fingerprint is not None:
@@ -597,7 +609,8 @@ class Worker:
             attempt.expires_at = challenge.get("expires_at")
             connection = session.get(m.PlatformConnection, connection_id)
             if connection and connection.generation == generation:
-                connection.auth_state, connection.error_code = "challenge_required", "captcha_required"
+                connection.auth_state = "challenge_required"
+                connection.error_code = login.get("error_code") or "captcha_required"
             if challenge.get("image"):
                 self.challenges[attempt.id] = {"owner_id": owner_id, "connection_id": connection_id, "generation": generation, "platform": connection.platform if connection else None, "adapter_attempt_id": login.get("attempt_id"), **challenge}
 
@@ -935,7 +948,7 @@ class Worker:
                         current_group = target_group
                     elif current_group and course_code and current_group.course_code is None:
                         current_group.course_code = course_code
-                    if current_group and len(course["title"]) > len(current_group.display_name):
+                    if current_group and _course_title_quality(course["title"]) > _course_title_quality(current_group.display_name):
                         current_group.display_name = course["title"]
                 source.title, source.term, source.course_code, source.source_url, source.last_seen_at = course["title"], course.get("term"), course_code or source.course_code, course.get("source_url"), self.clock()
             job.coverage = json.dumps(payload.get("coverage", {}), ensure_ascii=False)

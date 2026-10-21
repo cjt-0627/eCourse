@@ -262,7 +262,10 @@ def _run_dev_processes(settings: Settings, host: str, port: int, browser: str = 
         nonlocal stopping
         stopping = True
 
-    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    shutdown_signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):
+        shutdown_signals.append(signal.SIGHUP)
+    previous = {sig: signal.signal(sig, stop) for sig in shutdown_signals}
     try:
         worker_arguments = ["worker"]
         if no_retry: worker_arguments.append("--no-retry")

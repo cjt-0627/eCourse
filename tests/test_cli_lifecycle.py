@@ -180,6 +180,28 @@ def test_dev_cleanup_signals_process_groups_after_children_exit(tmp_path, monkey
     assert signals == [(4101, cli.signal.SIGTERM), (4102, cli.signal.SIGTERM)]
 
 
+def test_dev_launcher_handles_terminal_hangup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    settings = Settings(tmp_path / "data", tmp_path / "secrets")
+    monkeypatch.setattr(cli, "require_initialized", lambda _: None)
+    processes = [SimpleNamespace(pid=4201, poll=lambda: 1, wait=lambda **_: 1),
+                 SimpleNamespace(pid=4202, poll=lambda: 1, wait=lambda **_: 1)]
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *_args, **_kwargs: processes.pop(0))
+    monkeypatch.setattr(cli.os, "killpg", lambda *_: None)
+    installed = []
+    original_signal = cli.signal.signal
+
+    def record_signal(sig, handler):
+        installed.append(sig)
+        return original_signal(sig, handler)
+
+    monkeypatch.setattr(cli.signal, "signal", record_signal)
+    assert cli._run_dev_processes(settings, "127.0.0.1", 8765) == 1
+    if hasattr(cli.signal, "SIGHUP"):
+        assert cli.signal.SIGHUP in installed
+
+
 def test_restricted_validation_flags_reach_worker_child(tmp_path, monkeypatch):
     from types import SimpleNamespace
     settings = Settings(tmp_path / "data", tmp_path / "secrets")

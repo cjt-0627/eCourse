@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
-from playwright.async_api import Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Browser, BrowserContext, Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError
 
 from .base import (
     AdapterStatus,
@@ -27,6 +27,17 @@ MAX_CAPTCHA_SUBMISSIONS = 2
 AUTOMATIC_CAPTCHA_CONFIDENCE = 0.95
 CAPTCHA_SOLVER_TIMEOUT_SECONDS = 5
 MAX_CAPTCHA_IMAGES_PER_LOGIN = 4
+TRANSIENT_BROWSER_ERROR_MARKERS = (
+    "net::ERR_NETWORK_CHANGED",
+    "net::ERR_INTERNET_DISCONNECTED",
+    "net::ERR_NAME_NOT_RESOLVED",
+    "net::ERR_CONNECTION_RESET",
+    "net::ERR_CONNECTION_REFUSED",
+    "net::ERR_CONNECTION_CLOSED",
+    "net::ERR_ADDRESS_UNREACHABLE",
+    "net::ERR_PROXY_CONNECTION_FAILED",
+    "net::ERR_TUNNEL_CONNECTION_FAILED",
+)
 
 
 @dataclass(slots=True)
@@ -91,8 +102,8 @@ class NthuSsoMixin:
                     stage = "open_sso"
                     if urlparse(page.url).hostname != SSO_HOST:
                         selector = (
-                            "a[href*='/auth/oauth2/login.php?id=5']" if self.platform == "elearn"
-                            else "a[href*='/service/oauthRedir']"
+                            "a[href*='/auth/oauth2/login.php?id=5']:visible" if self.platform == "elearn"
+                            else "a[href*='/service/oauthRedir']:visible"
                         )
                         await page.locator(selector).first.click(timeout=self.timeout_ms)
                     stage = "sso_form"
@@ -101,6 +112,7 @@ class NthuSsoMixin:
                     await page.locator("#password, input[name=password]").first.fill(password)
                     stage = "captcha_image"
                     image_locator = page.locator("#captcha_image, img[alt*='CAPTCHA']").first
+                    await self._wait_for_captcha_image(image_locator)
                     image = await image_locator.screenshot(timeout=self.timeout_ms)
                 attempt = LoginAttempt(
                     attempt_id=str(uuid4()), challenge_id=str(uuid4()), platform=self.platform,
@@ -112,11 +124,8 @@ class NthuSsoMixin:
                     attempt, image, image_locator
                 )
                 if candidate is not None:
-                    # Automatic and human answers share answer_challenge, so
-                    # the same two-submission budget and failure classifier
-                    # apply. A rejected model answer leaves one human attempt.
-                    return await self.answer_challenge(
-                        attempt.attempt_id, attempt.challenge_id, candidate
+                    return await self._answer_automatic_captcha(
+                        attempt, candidate, image_locator,
                     )
                 return self._challenge_result(attempt, image)
             except PlaywrightTimeoutError:
@@ -127,6 +136,12 @@ class NthuSsoMixin:
                 return self._timeout_result(stage, overall=True)
             except Exception as exc:
                 await context.close()
+                if self._is_transient_browser_error(exc):
+                    return LoginResult(
+                        AdapterStatus.UPSTREAM_UNAVAILABLE, error_code="upstream_unavailable",
+                        message=f"校方平台連線中斷（{stage}）", retryable=True,
+                        diagnostic_stage=stage,
+                    )
                 return LoginResult(
                     AdapterStatus.PARSER_CHANGED, error_code="parser_changed",
                     message=f"登入頁結構無法辨識（{stage}）：{type(exc).__name__}", diagnostic_stage=stage,
@@ -172,6 +187,30 @@ class NthuSsoMixin:
             current_image = refreshed
         return None, current_image
 
+    async def _answer_automatic_captcha(
+        self, attempt: LoginAttempt, candidate: str, image_locator,
+    ) -> LoginResult:
+        result = await self.answer_challenge(
+            attempt.attempt_id, attempt.challenge_id, candidate,
+        )
+        # A rejected high-confidence answer can still occur. Use the fresh
+        # CAPTCHA returned by SSO for the second and final automatic attempt;
+        # fall back to the human challenge when it is not confidently readable.
+        if (
+            result.status == AdapterStatus.CHALLENGE_REQUIRED
+            and result.error_code == "captcha_rejected"
+            and result.challenge is not None
+            and attempt.attempt_id in self._attempts
+        ):
+            second_candidate, _ = await self._automatic_captcha_with_refresh(
+                attempt, result.challenge.image or b"", image_locator,
+            )
+            if second_candidate is not None:
+                return await self.answer_challenge(
+                    attempt.attempt_id, attempt.challenge_id, second_candidate,
+                )
+        return result
+
     async def _refresh_captcha_for_solver(
         self, attempt: LoginAttempt, previous_image: bytes,
     ) -> bytes | None:
@@ -203,14 +242,36 @@ class NthuSsoMixin:
                 await self._wait_for_sso_form(page)
                 await page.locator("#id, input[name=id]").first.fill(attempt.expected_account)
                 await page.locator("#password, input[name=password]").first.fill(attempt.password)
-            fresh = await page.locator(
+            image_locator = page.locator(
                 "#captcha_image, img[alt*='CAPTCHA']"
-            ).first.screenshot(timeout=self.timeout_ms)
+            ).first
+            await self._wait_for_captcha_image(image_locator)
+            fresh = await image_locator.screenshot(timeout=self.timeout_ms)
             return fresh if fresh != previous_image else None
         except Exception:
             # Refresh is an optimization. DOM changes, a missing control, or a
             # reload failure must preserve the current manual challenge.
             return None
+
+    async def _wait_for_captcha_image(self, image_locator) -> None:
+        """Wait for the current CAPTCHA pixels, not only its DOM node or src."""
+        await image_locator.wait_for(state="visible", timeout=self.timeout_ms)
+        await image_locator.evaluate(
+            """image => {
+                if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) return true;
+                return new Promise((resolve, reject) => {
+                    const loaded = () => { cleanup(); resolve(true); };
+                    const failed = () => { cleanup(); reject(new Error('captcha image failed to load')); };
+                    const cleanup = () => {
+                        image.removeEventListener('load', loaded);
+                        image.removeEventListener('error', failed);
+                    };
+                    image.addEventListener('load', loaded, {once: true});
+                    image.addEventListener('error', failed, {once: true});
+                });
+            }""",
+            timeout=self.timeout_ms,
+        )
 
     async def answer_challenge(
         self, attempt_id: str, challenge_id: str, answer: str, request_id: str | None = None,
@@ -242,7 +303,14 @@ class NthuSsoMixin:
                 result = LoginResult(AdapterStatus.UPSTREAM_TIMEOUT, attempt_id=attempt_id, error_code="upstream_timeout", message="校方回應逾時", retryable=True)
                 await self._discard_attempt(attempt_id)
             except Exception as exc:
-                result = LoginResult(AdapterStatus.PARSER_CHANGED, attempt_id=attempt_id, error_code="parser_changed", message=f"登入回應無法辨識：{type(exc).__name__}")
+                if self._is_transient_browser_error(exc):
+                    result = LoginResult(
+                        AdapterStatus.UPSTREAM_UNAVAILABLE, attempt_id=attempt_id,
+                        error_code="upstream_unavailable", message="校方平台連線中斷",
+                        retryable=True,
+                    )
+                else:
+                    result = LoginResult(AdapterStatus.PARSER_CHANGED, attempt_id=attempt_id, error_code="parser_changed", message=f"登入回應無法辨識：{type(exc).__name__}")
                 await self._discard_attempt(attempt_id)
             if request_id:
                 attempt.answered_request_ids[request_id] = result
@@ -339,10 +407,19 @@ class NthuSsoMixin:
             return verification
         except PlaywrightTimeoutError:
             return SessionVerification(AdapterStatus.UPSTREAM_TIMEOUT, error_code="upstream_timeout")
-        except Exception:
+        except Exception as exc:
+            if self._is_transient_browser_error(exc):
+                return SessionVerification(AdapterStatus.UPSTREAM_UNAVAILABLE, error_code="upstream_unavailable")
             return SessionVerification(AdapterStatus.PARSER_CHANGED, error_code="parser_changed")
         finally:
             await context.close()
+
+    @staticmethod
+    def _is_transient_browser_error(error: Exception) -> bool:
+        if not isinstance(error, PlaywrightError):
+            return False
+        message = str(error)
+        return any(marker in message for marker in TRANSIENT_BROWSER_ERROR_MARKERS)
 
     async def _goto(self, page: Page, url: str) -> None:
         await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)

@@ -3,16 +3,16 @@
 {% block content %}
 <div class="toolbar">
   <label>{{ t('搜尋') }}<input id="todo-search" placeholder="{{ t('標題或課程') }}"></label>
-  <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}">{{ course.get('display_name') }}</option>{% endfor %}</select></label>
+  <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}">{{ course_name(course.get('display_name'), course.get('course_code')) }}</option>{% endfor %}</select></label>
   <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="">{{ t('全部') }}</option><option value="unsubmitted">{{ t('未繳交') }}</option><option value="submitted">{{ t('已繳交') }}</option><option value="unknown">{{ t('待確認') }}</option></select></label>
 </div>
 <section class="panel" id="todo-list">
 {% for item in data.get('items',[]) %}
-  <article class="row todo" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ item.get('course_name','') }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}">
+  <article class="row todo" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ course_name(item.get('course_name')) }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}">
     <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認')) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') == 'unsubmitted' else '') }}</span>
     <div class="todo-main">
       <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
-      <small>{{ item.get('course_name') or t('手動事件') }} · {{ item.get('display_at')|taipei if item.get('display_at') else t('期限未提供') }}</small>
+      <small>{{ course_name(item.get('course_name')) or t('手動事件') }} · {{ item.get('display_at')|taipei if item.get('display_at') else t('期限未提供') }}</small>
       {% if item.get('manual') %}
         <small>{{ t('手動建立的考試／事件') }}</small>
       {% else %}
