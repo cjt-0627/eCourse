@@ -91,6 +91,17 @@ def test_login_event_crud_reminders_and_logout(web):
     assert client.get("/api/v1/dashboard").status_code == 401
 
 
+def test_ai_web_surface_is_removed(web):
+    client, _settings, _db, _owner = web
+    headers = login(client)
+    dashboard = client.get("/")
+    assert 'class="ai-launcher"' not in dashboard.text
+    assert 'href="/settings/ai"' not in dashboard.text
+    assert client.get("/settings/ai").status_code == 404
+    assert client.get("/api/v1/settings/ai").status_code == 404
+    assert client.post("/api/v1/ai/chat", headers=headers, json={"messages": []}).status_code == 404
+
+
 def test_dashboard_can_open_each_connected_platform_with_saved_session(web):
     client, _settings, db, owner = web
     login(client)

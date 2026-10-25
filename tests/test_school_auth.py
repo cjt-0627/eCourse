@@ -221,5 +221,6 @@ def test_0004_upgrade_preserves_legacy_owner_child_tree(tmp_path):
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 1
         assert connection.execute("SELECT credential_id FROM platform_connections").fetchone()[0] == "credential"
         assert connection.execute("SELECT verified_at IS NOT NULL FROM credential_secrets").fetchone()[0] == 1
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0008"
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0010"
+        assert connection.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ai_settings'").fetchone()[0] == 0
         assert connection.execute("SELECT locale FROM owners").fetchone()[0] == "zh-Hant"
