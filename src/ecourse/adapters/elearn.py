@@ -18,7 +18,10 @@ from .nthu_sso import NthuSsoMixin, SSO_HOST
 class ElearnAdapter(NthuSsoMixin):
     platform = "elearn"
     allow_protected_session_without_remote_id = True
-    login_url = "https://elearn.nthu.edu.tw/"
+    # The public home page now routes its login button through Moodle's login
+    # page instead of exposing the NTHU OAuth link directly.  Start from the
+    # dedicated login page so NthuSsoMixin can follow the official provider.
+    login_url = "https://elearn.nthu.edu.tw/login/index.php"
     protected_url = "https://elearn.nthu.edu.tw/my/index.php"
     courses_url = "https://elearn.nthu.edu.tw/my/courses.php"
     max_forum_containers = 8

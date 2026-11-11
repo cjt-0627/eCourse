@@ -7,10 +7,11 @@ from urllib.parse import urlsplit
 class ManagedPlatformBrowser:
     """A visible, worker-owned browser that never exports school cookies."""
 
-    def __init__(self, browser_type, *, timeout_ms: int = 30_000, executable_path: str | None = None):
+    def __init__(self, browser_type, *, timeout_ms: int = 30_000, executable_path: str | None = None, chromium_sandbox: bool = True):
         self.browser_type = browser_type
         self.timeout_ms = timeout_ms
         self.executable_path = executable_path
+        self.chromium_sandbox = chromium_sandbox
         self.browser = None
         self.contexts = set()
         self._launch_lock = asyncio.Lock()
@@ -18,7 +19,7 @@ class ManagedPlatformBrowser:
     async def open(self, storage_state: dict, target_url: str) -> dict:
         async with self._launch_lock:
             if self.browser is None or not self.browser.is_connected():
-                options = {"headless": False, "chromium_sandbox": True}
+                options = {"headless": False, "chromium_sandbox": self.chromium_sandbox}
                 if self.executable_path:
                     options["executable_path"] = self.executable_path
                 self.browser = await self.browser_type.launch(**options)

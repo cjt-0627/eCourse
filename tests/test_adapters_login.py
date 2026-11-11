@@ -25,6 +25,10 @@ def test_login_security_limits_are_explicit() -> None:
     assert ALLOWED_HOSTS == {SSO_HOST, "elearn.nthu.edu.tw", "eeclass.nthu.edu.tw"}
 
 
+def test_elearn_login_starts_on_page_that_exposes_official_sso_provider() -> None:
+    assert ElearnAdapter.login_url == "https://elearn.nthu.edu.tw/login/index.php"
+
+
 def test_default_solver_requires_human_input() -> None:
     result = asyncio.run(ManualCaptchaSolver().solve(b"anonymous-image"))
     assert result.candidate is None

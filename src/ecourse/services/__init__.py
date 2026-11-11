@@ -71,7 +71,7 @@ class Service:
             token_path = settings.secret_dir / "ipc.token"
             if token_path.exists():
                 from ecourse.ipc import WorkerIPCClient, ipc_socket_path
-                ipc_client = WorkerIPCClient(ipc_socket_path(settings.data_dir), token_path.read_text().strip())
+                ipc_client = WorkerIPCClient(ipc_socket_path(settings.runtime_dir), token_path.read_text().strip())
         self.ipc_client = ipc_client
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -413,7 +413,7 @@ class Service:
             token_path = self.settings.secret_dir / "ipc.token"
             if token_path.exists():
                 from ecourse.ipc import WorkerIPCClient, ipc_socket_path
-                self.ipc_client = WorkerIPCClient(ipc_socket_path(self.settings.data_dir), token_path.read_text().strip())
+                self.ipc_client = WorkerIPCClient(ipc_socket_path(self.settings.runtime_dir), token_path.read_text().strip())
         return self.ipc_client
 
     def list_courses(self, owner_id: str) -> list[dict]:

@@ -1,0 +1,17 @@
+.git
+.venv
+.pytest_cache
+.cache
+.data
+.secrets
+.runtime
+.backups
+.docker-runtime
+.env
+.env.docker
+dist
+build
+__pycache__
+*.sqlite*
+*.log
+.DS_Store

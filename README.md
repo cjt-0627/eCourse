@@ -2,7 +2,21 @@
 
 本機課務整合網站：手動事件、課程來源選擇、站內提醒與背景同步。已使用授權帳號測試兩個校方平台的登入、課程與主要內容讀取，以及程式重開後恢復登入狀態。**手機主動通知尚未完成；公告內文是否完整、登入過期後能否自動恢復，以及長期同步是否漏資料，仍需持續確認。** 詳細進度見下方「尚未完成的範圍與目前進度」。
 
-## 在這台 Mac 啟動
+## 啟動（Docker + PostgreSQL，主要方式）
+
+日常使用以 Docker Compose 執行：PostgreSQL 保存資料，Web 與 Worker 為兩個獨立容器，網站只發布到宿主機 `127.0.0.1:8765`。
+
+```sh
+docker compose --env-file .env.docker up -d
+```
+
+啟動後手動在瀏覽器開啟 **http://localhost:8765**，以校務帳密登入。首次安裝、資料庫遷移、備份與還原請見下方「Docker Compose（PostgreSQL）」。容器不會自動開啟瀏覽器。
+
+**不要同時使用 Docker 與下方的本機模式**，兩者都使用 8765 連接埠，且資料庫互相獨立。
+
+## 本機模式（開發與測試，SQLite）
+
+本機模式不需要 Docker，資料存於 SQLite（`.data/ecourse.sqlite3`），主要供開發與自動測試使用，不再是日常使用的資料來源。
 
 目前已安裝 Python 3.12 虛擬環境、套件與 Playwright Chromium。在 Finder 雙擊 `start.command`，或在專案目錄執行：
 
@@ -13,6 +27,8 @@
 首次本機啟動會自動建立不可登入的內部 owner，不會在終端要求另一組帳號密碼。網站就緒後會自動在 **Brave** 開啟 **http://localhost:8765**，直接使用校務帳密登入。校務身分驗證成功前不會建立網站 session；密碼只以本機主金鑰加密保存。已初始化時不會覆寫資料或金鑰，並會套用必要 migration。Production 部署仍需管理員在終端明確初始化，避免第一個遠端訪客取得 owner。
 
 `start.command` 使用專案的 `.data` 保存 SQLite，`.secrets` 保存主金鑰與 IPC token。兩個目錄均排除版本控制。關閉網站分頁不停止 worker；終端按 Ctrl+C 會同時停止網站與 worker。電腦關機或休眠時不會執行工作。重複雙擊會重用同一個已啟動的實例，不會再開第二個 worker。
+
+## 同步與使用方式（兩種模式相同）
 
 首次同步會完整建立課程與課務快取，因此可能需要數分鐘。後續每小時先檢查兩平台登入狀態；失效時會使用本機加密保存的帳密嘗試重新登入，再以增量模式並行掃描課程，只重查新增、近期未完成或已繳交但尚未出成績的項目。正常網路下以約 10 秒內完成為目標。校方頁面逾時時會保留上次資料並顯示「部分完成」，不會把逾時誤當成沒有課務。
 
@@ -38,6 +54,8 @@
 在「設定 → 外觀」選擇淺色、深色或跟隨系統，切換立即生效；同一頁也能將介面切換為繁體中文或 English。外觀偏好儲存在目前瀏覽器，語言偏好則儲存在帳號中，重新啟動後仍會保留。手機版使用浮動玻璃導覽列。
 
 ## 在手機安全開啟
+
+注意：`mobile.command` 目前啟動的是本機 SQLite 模式，不會讀取 Docker 裡 PostgreSQL 的資料，也尚未支援 Docker 模式。要用它請先停止 Docker 容器（`docker compose --env-file .env.docker stop web worker`），且會看到另一個獨立資料庫。
 
 不需要購買網域，也不要將 `8765` 對外做 port forwarding。手機模式使用 Tailscale Serve：eCourse 後端仍只監聽 `127.0.0.1`，Tailscale 在私人 tailnet 內提供 HTTPS，未加入同一個 tailnet 的裝置無法連線。
 
@@ -69,6 +87,42 @@ uv run ecourse start --browser brave
 ```
 
 網站認證與校方認證是獨立的。登出網站不會停止 worker；解除平台連接會使舊登入工作失效。
+
+## Docker Compose（PostgreSQL）
+
+容器部署使用 PostgreSQL，Web 與 Worker 分開執行，並且只將網站發布到宿主機 `127.0.0.1:8765`。請先從 `.env.docker` 設定強密碼，然後執行：
+
+```sh
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d postgres
+docker compose --env-file .env.docker run --rm migrate
+```
+
+全新安裝請先執行 `docker compose --env-file .env.docker run --rm web ecourse init`，再執行 `docker compose --env-file .env.docker up -d web worker`。
+
+若手上有舊版 SQLite 資料庫（`.data/ecourse.sqlite3`），可在第一次啟動 Web/Worker 前匯入。匯入只接受空的 PostgreSQL，目標已有資料時會拒絕：
+
+```sh
+docker compose --env-file .env.docker --profile tools run --rm import-sqlite
+docker compose --env-file .env.docker up -d web worker
+```
+
+本專案原有的 SQLite 資料已遷移完成，舊檔已刪除；現在的資料以 PostgreSQL 為準。容器共用專案的 `.secrets` 主金鑰與 IPC token；請勿提交或遺失此目錄。
+
+PostgreSQL 備份使用與 server 同主版本的 `pg_dump`，會寫入 `.backups/ecourse-<UTC timestamp>.dump` 並以 `pg_restore --list` 驗證：
+
+```sh
+docker compose --env-file .env.docker --profile tools run --rm backup
+```
+
+備份不包含 `.secrets/master-v1.key`，必須另行安全保存。還原會刪除 PostgreSQL `public` schema，只能在先停止 Web 與 Worker 後明確授權：
+
+```sh
+docker compose --env-file .env.docker stop web worker
+ALLOW_RESTORE=yes RESTORE_FILE=/backups/ecourse-YYYYMMDDTHHMMSSZ.dump \
+  docker compose --env-file .env.docker --profile tools run --rm restore
+docker compose --env-file .env.docker up -d web worker
+```
 
 ## 管理與驗證指令
 

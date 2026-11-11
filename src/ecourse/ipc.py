@@ -15,10 +15,11 @@ class IPCError(Exception):
         self.code = code
 
 
-def ipc_socket_path(data_dir: Path) -> Path:
-    """Keep Unix socket under macOS' short sockaddr_un limit."""
-    digest = hashlib.sha256(str(Path(data_dir).resolve()).encode()).hexdigest()[:20]
-    return Path("/tmp") / f"ecourse-{digest}.sock"
+def ipc_socket_path(runtime_dir: Path) -> Path:
+    """Keep the socket in a configurable shared runtime directory."""
+    runtime_dir = Path(runtime_dir).resolve()
+    digest = hashlib.sha256(str(runtime_dir).encode()).hexdigest()[:12]
+    return runtime_dir / f"ecourse-{digest}.sock"
 
 
 async def _read_message(reader: asyncio.StreamReader) -> dict:

@@ -234,9 +234,12 @@ class EeclassAdapter(NthuSsoMixin):
                             body = "\n".join((await report_main.inner_text()).splitlines())
             due = parse_nthu_date(due_text)
             status_text = _labeled_value(body, ("繳交狀態", "提交狀態", "作答狀態", "狀態", "Submission status", "Status"))
-            if not status_text and "此作業已繳交" in body:
-                status_text = "此作業已繳交"
             status = _personal_status(status_text, item_ref.kind)
+            # The report page's generic "狀態" row is the grading state, so the
+            # explicit submitted banner must win when it did not decide.
+            if status == "unknown" and "此作業已繳交" in body:
+                status = "submitted"
+                status_text = status_text or "此作業已繳交"
             grade = _labeled_value(body, ("成績", "得分", "Grade", "Score"))
             if grade and grade.strip().casefold() in {"-", "尚未評分", "未評分", "not graded"}:
                 grade = None
@@ -278,7 +281,8 @@ async def _has_official_sso_login_link(page: Page) -> bool:
 
 def _labeled_value(text: str, labels: tuple[str, ...]) -> str | None:
     for label in labels:
-        match = re.search(rf"(?:^|\n)\s*{re.escape(label)}\s*[:：]?\s*([^\n]+)", text, re.I)
+        # The label must end at a word boundary so "成績" does not match "成績比重".
+        match = re.search(rf"(?:^|\n)\s*{re.escape(label)}(?!\w)\s*[:：]?\s*([^\n]+)", text, re.I)
         if match:
             return match.group(1).strip()
     return None
@@ -290,6 +294,11 @@ def _personal_status(value: str | None, kind: str) -> str:
         return "not_submitted"
     if any(marker in folded for marker in ("草稿", "draft", "進行中", "in progress")):
         return "draft"
+    if "已批改" in folded or "已評分" in folded:
+        return "graded"
+    if any(marker in folded for marker in ("尚未批改", "待批改", "未批改", "批改中")):
+        # A grading state only exists once the work has been handed in.
+        return "submitted"
     if any(marker in folded for marker in ("已繳交", "已提交", "submitted")):
         return "submitted"
     if any(marker in folded for marker in ("已完成", "finished", "completed")):

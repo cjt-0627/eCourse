@@ -11,6 +11,9 @@ class Settings:
     base_url: str = "http://localhost:8765"
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1")
     environment: str = "local"
+    database_url: str | None = None
+    runtime_dir: Path = Path("/tmp")
+    chromium_sandbox: bool = True
 
     def __post_init__(self):
         url = urlsplit(self.base_url)
@@ -28,6 +31,10 @@ class Settings:
             raise ValueError("ECOURSE_ALLOWED_HOSTS 必須使用精確主機名稱，不可包含萬用字元或連接埠。")
         if url.hostname not in self.allowed_hosts:
             raise ValueError("ECOURSE_BASE_URL 主機必須在 ECOURSE_ALLOWED_HOSTS 中。")
+        if self.database_url is not None and not self.database_url.strip():
+            raise ValueError("ECOURSE_DATABASE_URL 不可為空白。")
+        if not self.runtime_dir.is_absolute():
+            raise ValueError("ECOURSE_RUNTIME_DIR 必須使用絕對路徑。")
         object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
 
     @classmethod
@@ -45,4 +52,7 @@ class Settings:
             base_url=os.environ.get("ECOURSE_BASE_URL", "http://localhost:8765"),
             allowed_hosts=tuple(host.strip() for host in os.environ.get("ECOURSE_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")),
             environment=os.environ.get("ECOURSE_ENV", "local"),
+            database_url=os.environ.get("ECOURSE_DATABASE_URL"),
+            runtime_dir=Path(os.environ.get("ECOURSE_RUNTIME_DIR", "/tmp")).expanduser().resolve(),
+            chromium_sandbox=os.environ.get("ECOURSE_CHROMIUM_SANDBOX", "true").strip().casefold() not in {"0", "false", "no", "off"},
         )

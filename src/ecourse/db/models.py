@@ -17,12 +17,15 @@ def utcnow() -> datetime:
 
 
 class DateTime(TypeDecorator):
-    """Persist UTC in SQLite and always return aware UTC datetimes."""
+    """Persist UTC and always return aware UTC datetimes."""
     impl = SADateTime
     cache_ok = True
 
     def __init__(self, timezone=True, **kwargs):
         super().__init__(timezone=False, **kwargs)
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(SADateTime(timezone=dialect.name != "sqlite"))
 
     def process_bind_param(self, value, dialect):
         if value is None:

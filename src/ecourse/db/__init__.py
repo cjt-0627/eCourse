@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Base
@@ -13,9 +14,14 @@ from .models import Base
 class Database:
     def __init__(self, settings):
         self.settings = settings
-        self.path = Path(settings.data_dir) / "ecourse.sqlite3"
-        self.engine: Engine = create_engine(f"sqlite:///{self.path}", future=True)
-        event.listen(self.engine, "connect", self._configure_sqlite)
+        self.path = Path(settings.data_dir) / "ecourse.sqlite3" if not settings.database_url else None
+        self.url = make_url(settings.database_url) if settings.database_url else make_url(f"sqlite:///{self.path}")
+        options = {"future": True}
+        if self.url.get_backend_name() != "sqlite":
+            options["pool_pre_ping"] = True
+        self.engine: Engine = create_engine(self.url, **options)
+        if self.url.get_backend_name() == "sqlite":
+            event.listen(self.engine, "connect", self._configure_sqlite)
         self._factory = sessionmaker(self.engine, expire_on_commit=False)
 
     @staticmethod
@@ -28,7 +34,8 @@ class Database:
 
     def initialize(self) -> None:
         """Explicit schema migration. Application startup must not call this implicitly."""
-        Path(self.settings.data_dir).mkdir(parents=True, exist_ok=True)
+        if self.path is not None:
+            Path(self.settings.data_dir).mkdir(parents=True, exist_ok=True)
         try:
             from alembic import command
             from alembic.config import Config
@@ -38,11 +45,14 @@ class Database:
         packaged_migrations = Path(__file__).resolve().parent / "migrations"
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(packaged_migrations))
-        config.set_main_option("sqlalchemy.url", f"sqlite:///{self.path}")
+        # ConfigParser treats percent signs in URL-escaped passwords as
+        # interpolation markers, so escape them before handing the URL to Alembic.
+        database_url = self.url.render_as_string(hide_password=False).replace("%", "%%")
+        config.set_main_option("sqlalchemy.url", database_url)
         command.upgrade(config, "head")
 
     def ready(self) -> bool:
-        if not self.path.exists():
+        if self.path is not None and not self.path.exists():
             return False
         try:
             with self.engine.connect() as connection:

@@ -250,8 +250,11 @@ def _run_dev_processes(settings: Settings, host: str, port: int, browser: str = 
     environment.update(
         ECOURSE_DATA_DIR=str(settings.data_dir), ECOURSE_SECRET_DIR=str(settings.secret_dir),
         ECOURSE_BASE_URL=settings.base_url, ECOURSE_ALLOWED_HOSTS=",".join(settings.allowed_hosts),
-        ECOURSE_ENV=settings.environment,
+        ECOURSE_ENV=settings.environment, ECOURSE_RUNTIME_DIR=str(settings.runtime_dir),
+        ECOURSE_CHROMIUM_SANDBOX="true" if settings.chromium_sandbox else "false",
     )
+    if settings.database_url:
+        environment["ECOURSE_DATABASE_URL"] = settings.database_url
     children = []
     stopping = False
     browser_opened = browser == "none"
@@ -316,8 +319,6 @@ def server_settings(settings: Settings, host: str, port: int | None) -> tuple[Se
     port = port or url.port or (443 if url.scheme == "https" else 80)
     if not 1 <= port <= 65535:
         raise ValueError("連接埠必須介於 1 至 65535。")
-    if settings.environment == "local" and host not in {"127.0.0.1", "localhost"}:
-        raise ValueError("本機模式僅允許綁定 127.0.0.1 或 localhost。")
     if settings.environment == "local" and url.scheme == "http":
         settings = replace(settings, base_url=f"http://{url.hostname}:{port}")
     return settings, port
@@ -340,10 +341,7 @@ def tailscale_mobile_settings(settings: Settings, *, executable: str | None = No
     valid_name = re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]+", hostname)
     if not valid_name or not suffix or (hostname != suffix and not hostname.endswith(f".{suffix}")):
         raise ValueError("Tailscale 尚未提供可用的私人 HTTPS 主機名稱；請確認 MagicDNS 與 HTTPS 已啟用。")
-    return Settings(
-        settings.data_dir, settings.secret_dir,
-        base_url=f"https://{hostname}", allowed_hosts=(hostname,), environment="production",
-    )
+    return replace(settings, base_url=f"https://{hostname}", allowed_hosts=(hostname,), environment="production")
 
 
 def configure_tailscale_serve(port: int, *, executable: str | None = None) -> None:
@@ -373,6 +371,8 @@ def main() -> int:
     backup.add_argument("destination", type=Path)
     restore = commands.add_parser("restore", help="使用原主金鑰還原至空資料目錄")
     restore.add_argument("archive", type=Path)
+    import_sqlite_parser = commands.add_parser("import-sqlite", help="將現有 SQLite 資料匯入空的 PostgreSQL")
+    import_sqlite_parser.add_argument("source", type=Path)
     worker = commands.add_parser("worker", help="執行獨立背景服務")
     worker.add_argument("--no-retry", action="store_true", help="停用自動重試；每次連接僅一次登入嘗試")
     worker.add_argument("--manual-sync-only", action="store_true", help="停用週期同步，只執行手動排入的工作")
@@ -400,6 +400,12 @@ def main() -> int:
         if args.command == "restore":
             info = restore_backup(settings, args.archive)
             print(f"還原完成：{info.database_path}\n網站登入已撤銷，平台同步已暫停；啟動後請重新連接。")
+            return 0
+        if args.command == "import-sqlite":
+            from ecourse.db.import_sqlite import import_sqlite
+            Vault(settings.secret_dir)
+            copied = import_sqlite(settings, args.source)
+            print(f"SQLite 匯入完成：{sum(copied.values())} 筆，{len(copied)} 張表。")
             return 0
         if args.command == "init":
             return initialize(settings)

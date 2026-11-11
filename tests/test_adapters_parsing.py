@@ -315,3 +315,14 @@ def test_course_catalog_ignores_platform_tutorials_and_help_overlay():
     <main><a href="/course/view.php?id=101">影片製作</a></main>"""
     records = parse_courses(html, "https://elearn.nthu.edu.tw/my/courses.php", "elearn")
     assert [(row.remote_id, row.title) for row in records] == [("101", "影片製作")]
+
+
+def test_eeclass_grading_state_implies_submitted() -> None:
+    assert _personal_status("尚未批改", "assignment") == "submitted"
+    assert _personal_status("已批改", "assignment") == "graded"
+    assert _personal_status("未繳交", "assignment") == "not_submitted"
+
+
+def test_eeclass_grade_label_does_not_match_weight_row() -> None:
+    assert _eeclass_labeled_value("成績比重\n計算", ("成績",)) is None
+    assert _eeclass_labeled_value("成績\n95", ("成績",)) == "95"

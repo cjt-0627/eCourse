@@ -26,6 +26,11 @@ from ecourse.adapters.base import CourseItem
 
 
 PERIODIC_SYNC_INTERVAL = timedelta(hours=1)
+# School Moodle/eeclass pages routinely take several seconds behind SSO; the old
+# 3s/6s incremental limits made every status refresh time out and left stale data.
+COURSE_SCAN_TIMEOUT_SECONDS = 45
+ITEM_DETAIL_TIMEOUT_SECONDS = 25
+ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS = 25
 JOB_TIMEOUT_SECONDS = 10 * 60
 
 
@@ -326,7 +331,7 @@ class Worker:
                 async with course_semaphore:
                     operation = adapter.fetch_course(storage_state, remote_id)
                     raw_fetched = (
-                        await asyncio.wait_for(operation, timeout=6)
+                        await asyncio.wait_for(operation, timeout=COURSE_SCAN_TIMEOUT_SECONDS)
                         if fast_refresh else await operation
                     )
                 return source_id, raw_fetched
@@ -414,7 +419,7 @@ class Worker:
                 async with detail_semaphore:
                     raw_detail = await asyncio.wait_for(
                         adapter.fetch_item_detail(storage_state, item_ref),
-                        timeout=12 if item_kind == "announcement" else (3 if fast_refresh else 8),
+                        timeout=ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS if item_kind == "announcement" else ITEM_DETAIL_TIMEOUT_SECONDS,
                     )
                 return source, _plain(raw_detail)
             except TimeoutError:
@@ -530,8 +535,12 @@ class Worker:
                     value.get("grade_text"), due_at, due_date, closes_at,
                 ))
                 if enriched:
-                    item.remote_status = value.get("remote_status", "unknown")
-                    item.remote_status_text = value.get("remote_status_text")
+                    new_status = value.get("remote_status", "unknown")
+                    # An unparseable page must not erase a status that was
+                    # previously read from the platform.
+                    if new_status != "unknown" or item.remote_status in (None, "unknown"):
+                        item.remote_status = new_status
+                        item.remote_status_text = value.get("remote_status_text")
                     item.grade_text = value.get("grade_text")
                     item.grading_status_text = value.get("grading_status_text")
                     item.status_checked_at = self.clock()
@@ -1009,7 +1018,7 @@ class Worker:
                 logging.exception("timed-out platform sync failed during cleanup")
 
     async def run(self, poll_seconds=2.0):
-        lock_path = self.settings.data_dir / "worker.lock"
+        lock_path = self.settings.runtime_dir / "worker.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock:
             try:
@@ -1025,7 +1034,7 @@ class Worker:
                     fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, "w") as stream:
                         stream.write(secrets.token_urlsafe(32))
-                self.ipc_server = await WorkerIPCServer(ipc_socket_path(self.settings.data_dir), token_path.read_text().strip(), self.ipc_handler).start()
+                self.ipc_server = await WorkerIPCServer(ipc_socket_path(self.settings.runtime_dir), token_path.read_text().strip(), self.ipc_handler).start()
                 while not self.stop_event.is_set():
                     job = self.claim_job()
                     if job:
@@ -1095,7 +1104,7 @@ async def run_worker(settings, *, adapters=None, worker_id=None, stop_event=None
             from ecourse.decaptcha import OAuthCaptchaSolver
             if playwright is None:
                 playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(headless=True, chromium_sandbox=True)
+            browser = await playwright.chromium.launch(headless=True, chromium_sandbox=settings.chromium_sandbox)
             captcha_solver = OAuthCaptchaSolver(browser)
             return create_platform_adapters(browser, captcha_solver)
         return {}
@@ -1111,6 +1120,7 @@ async def run_worker(settings, *, adapters=None, worker_id=None, stop_event=None
             managed_browser = ManagedPlatformBrowser(
                 playwright.chromium,
                 executable_path=brave_path if os.access(brave_path, os.X_OK) else None,
+                chromium_sandbox=settings.chromium_sandbox,
             )
         return await managed_browser.open(storage_state, target_url)
 
