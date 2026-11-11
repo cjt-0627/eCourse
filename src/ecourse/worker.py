@@ -9,6 +9,7 @@ import os
 import socket
 import secrets
 import signal
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
@@ -32,6 +33,30 @@ COURSE_SCAN_TIMEOUT_SECONDS = 45
 ITEM_DETAIL_TIMEOUT_SECONDS = 25
 ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS = 25
 JOB_TIMEOUT_SECONDS = 10 * 60
+PLACEHOLDER_ANNOUNCEMENT_TITLES = frozenset({"公告", "Announcement"})
+
+# Opt-in phase timing (ECOURSE_TIMING=1) used to find where a sync spends its time.
+timing_log = logging.getLogger("ecourse.timing")
+if os.environ.get("ECOURSE_TIMING"):
+    _timing_handler = logging.StreamHandler()
+    _timing_handler.setFormatter(logging.Formatter("%(asctime)s TIMING %(message)s"))
+    timing_log.addHandler(_timing_handler)
+    timing_log.setLevel(logging.INFO)
+    timing_log.propagate = False
+
+
+def _timing(event, started, **fields):
+    if timing_log.isEnabledFor(logging.INFO):
+        detail = " ".join(f"{key}={value}" for key, value in fields.items())
+        timing_log.info("%s %.2fs %s", event, time.perf_counter() - started, detail)
+
+
+def _is_placeholder_announcement(item_ref) -> bool:
+    """The course-navigation "公告" link (/course/bulletin/<course id>), not a real announcement."""
+    title = str(getattr(item_ref, "title", "")).strip()
+    url = str(getattr(item_ref, "url", "") or "").rstrip("/")
+    remote_id = str(getattr(item_ref, "remote_id", ""))
+    return title in PLACEHOLDER_ANNOUNCEMENT_TITLES and url.endswith(f"/course/bulletin/{remote_id}")
 
 
 def _plain(value):
@@ -267,7 +292,9 @@ class Worker:
                 if not self._save_session_state(connection.id, platform, owner_id, job.generation, storage_state, login.get("remote_account_id")):
                     self._finish(job.id, "failed", "identity_mismatch")
                     return
+            _t = time.perf_counter()
             discovered = _plain(await adapter.discover_courses(storage_state))
+            _timing("discover_courses", _t, platform=platform, courses=len(discovered.get("records", discovered.get("courses", discovered.get("data", [])))), complete=discovered.get("complete", True))
             courses = discovered.get("records", discovered.get("courses", discovered.get("data", [])))
             normalized = []
             for value in courses:
@@ -276,7 +303,9 @@ class Worker:
             payload = {"courses": normalized, "coverage": discovered.get("coverage", ()), "complete": discovered.get("complete", True)}
             if not await self.commit_result(job.id, payload, finalize=False):
                 return
+            _t = time.perf_counter()
             content_complete = await self._fetch_selected(job.id, adapter, storage_state)
+            _timing("fetch_selected_total", _t, platform=platform, complete=content_complete)
             with self.db.session() as session:
                 current = session.get(m.SyncJob, job.id)
                 current_connection = session.get(m.PlatformConnection, current.connection_id) if current else None
@@ -326,30 +355,47 @@ class Worker:
 
         course_semaphore = asyncio.Semaphore(4)
 
+        in_flight = {"scan": 0, "detail": 0}
+
         async def scan_source(source_id, remote_id):
+            queued = time.perf_counter()
+            started, outcome = None, "ok"
             try:
                 async with course_semaphore:
-                    operation = adapter.fetch_course(storage_state, remote_id)
-                    raw_fetched = (
-                        await asyncio.wait_for(operation, timeout=COURSE_SCAN_TIMEOUT_SECONDS)
-                        if fast_refresh else await operation
-                    )
+                    started = time.perf_counter()
+                    in_flight["scan"] += 1
+                    peers = in_flight["scan"]
+                    try:
+                        operation = adapter.fetch_course(storage_state, remote_id)
+                        raw_fetched = (
+                            await asyncio.wait_for(operation, timeout=COURSE_SCAN_TIMEOUT_SECONDS)
+                            if fast_refresh else await operation
+                        )
+                    finally:
+                        in_flight["scan"] -= 1
                 return source_id, raw_fetched
             except TimeoutError:
+                outcome = "timeout"
                 return source_id, {
                     "records": (), "complete": False,
                     "warnings": ("course_refresh_timeout",),
                 }
             except Exception as exc:
+                outcome = "error"
                 logging.exception("course scan failed during incremental sync")
                 return source_id, {
                     "records": (), "complete": False,
                     "warnings": (getattr(exc, "code", "course_refresh_failed"),),
                 }
+            finally:
+                if started is not None:
+                    _timing("fetch_course", started, source=source_id, outcome=outcome, queue_wait=f"{started - queued:.2f}s", concurrent=peers if outcome == "ok" else "-")
 
+        _scan_started = time.perf_counter()
         scanned_sources = await asyncio.gather(
             *(scan_source(source_id, remote_id) for source_id, remote_id in source_refs)
         )
+        _timing("course_scan_total", _scan_started, sources=len(source_refs), fast_refresh=fast_refresh)
         prepared = []
         complete = True
         for source_id, raw_fetched in scanned_sources:
@@ -391,7 +437,7 @@ class Worker:
                 )
                 for item in cached_announcements.values()
                 if not item.body_sanitized and ("announcement", item.remote_id) not in existing_refs
-                and item.source_url and item.title.strip() not in {"公告", "Announcement"}
+                and item.source_url and item.title.strip() not in PLACEHOLDER_ANNOUNCEMENT_TITLES
             )
             prepared.append({
                 "source_id": source_id, "records": raw_records,
@@ -408,6 +454,9 @@ class Worker:
                 return source, None
             if not hasattr(adapter, "fetch_item_detail"):
                 return source, {"records": ({"item": _plain(item_ref), "content_text": None, "published_at": None},), "complete": True, "warnings": ()}
+            if item_kind == "announcement" and _is_placeholder_announcement(item_ref):
+                # Course-navigation link, not an announcement: there is no body to fetch.
+                return source, None
             if item_kind == "announcement":
                 cached_announcement = source["cached_announcements"].get(str(getattr(item_ref, "remote_id", "")))
                 if not self._needs_announcement_refresh(cached_announcement):
@@ -415,24 +464,39 @@ class Worker:
             cached = source["cached"].get((item_kind, str(getattr(item_ref, "remote_id", ""))))
             if item_kind != "announcement" and not self._needs_detail_refresh(cached):
                 return source, None
+            queued = time.perf_counter()
+            started, outcome, peers = None, "ok", "-"
             try:
                 async with detail_semaphore:
-                    raw_detail = await asyncio.wait_for(
-                        adapter.fetch_item_detail(storage_state, item_ref),
-                        timeout=ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS if item_kind == "announcement" else ITEM_DETAIL_TIMEOUT_SECONDS,
-                    )
+                    started = time.perf_counter()
+                    in_flight["detail"] += 1
+                    peers = in_flight["detail"]
+                    try:
+                        raw_detail = await asyncio.wait_for(
+                            adapter.fetch_item_detail(storage_state, item_ref),
+                            timeout=ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS if item_kind == "announcement" else ITEM_DETAIL_TIMEOUT_SECONDS,
+                        )
+                    finally:
+                        in_flight["detail"] -= 1
                 return source, _plain(raw_detail)
             except TimeoutError:
+                outcome = "timeout"
                 return source, {"records": (), "complete": False, "warnings": ("item_detail_timeout",)}
             except Exception as exc:
+                outcome = "error"
                 logging.exception("item detail failed during incremental sync")
                 return source, {"records": (), "complete": False, "warnings": (getattr(exc, "code", "item_detail_failed"),)}
+            finally:
+                if started is not None:
+                    _timing("fetch_item_detail", started, kind=item_kind, outcome=outcome, queue_wait=f"{started - queued:.2f}s", concurrent=peers)
 
+        _detail_started = time.perf_counter()
         detail_results = await asyncio.gather(*(
             fetch_detail(source, item_ref)
             for source in prepared
             for item_ref in source["records"]
         ))
+        _timing("detail_pass_total", _detail_started, items=len(detail_results), fetched=sum(1 for _s, r in detail_results if r is not None))
         for source, detail_result in detail_results:
             if detail_result is None:
                 continue
@@ -452,12 +516,15 @@ class Worker:
         return complete
 
     def _needs_announcement_refresh(self, announcement) -> bool:
-        if announcement is None or not announcement.body_sanitized or announcement.source_updated_at is None:
+        if announcement is None or announcement.source_updated_at is None:
             return True
         checked_at = announcement.source_updated_at
         if checked_at.tzinfo is None:
             checked_at = checked_at.replace(tzinfo=timezone.utc)
-        return checked_at < self.clock() - timedelta(hours=24)
+        # Announcements with a body rarely change; ones that came back empty get a
+        # shorter, but still bounded, retry interval.
+        interval = timedelta(hours=24) if announcement.body_sanitized else timedelta(hours=6)
+        return checked_at < self.clock() - interval
 
     def _needs_detail_refresh(self, item) -> bool:
         """Keep repeat syncs incremental while open work and pending grades stay fresh."""
@@ -473,10 +540,13 @@ class Worker:
         if item.remote_status == "submitted":
             return not bool(item.grade_text)
         deadline = item.due_at or item.closes_at
-        if deadline and deadline < now - timedelta(days=14):
-            return False
-        if item.due_date and item.due_date < now.date() - timedelta(days=14):
-            return False
+        old_deadline = bool(deadline and deadline < now - timedelta(days=14)) or bool(
+            item.due_date and item.due_date < now.date() - timedelta(days=14)
+        )
+        if old_deadline:
+            # Old work is normally left alone, but one whose personal status was
+            # never read stays "unknown" forever, so it gets a bounded daily retry.
+            return item.remote_status in (None, "unknown") and now - item.status_checked_at >= timedelta(hours=24)
         return True
 
     async def _commit_content(self, job_id, source_id, records, *, complete, warnings, detail_pass=False):
@@ -504,9 +574,16 @@ class Worker:
                         session.add(announcement)
                     announcement.title = value["title"]
                     announcement.source_url = value.get("source_url", value.get("url"))
-                    announcement.body_sanitized = detail.get("content_text")
-                    announcement.published_at = detail.get("published_at")
+                    # A listing-only record carries no body.  It must not erase a
+                    # body read earlier, or every sync would refetch every announcement.
                     if detail.get("content_text"):
+                        announcement.body_sanitized = detail["content_text"]
+                    if detail.get("published_at"):
+                        announcement.published_at = detail["published_at"]
+                    if detail.get("content_text") or detail_pass:
+                        # source_updated_at records the last detail check, including
+                        # one that found no body, so empty ones back off instead of
+                        # being refetched on every sync.
                         announcement.source_updated_at = self.clock()
                     announcement.last_seen_at = self.clock()
                     continue

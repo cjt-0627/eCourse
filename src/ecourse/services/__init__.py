@@ -572,7 +572,7 @@ class Service:
                 query = query.where(m.PlatformConnection.platform == filters["platform"])
             if filters.get("q"):
                 query = query.where(or_(m.LearningItem.title.ilike(f"%{filters['q']}%"), m.CourseGroup.display_name.ilike(f"%{filters['q']}%")))
-            query = query.order_by(m.LearningItem.due_at.is_(None), m.LearningItem.due_at, m.LearningItem.due_date, m.LearningItem.title).limit(min(int(filters.get("limit", 50)), 100))
+            query = query.order_by(m.LearningItem.due_at.desc().nullslast(), m.LearningItem.due_date.desc().nullslast(), m.LearningItem.title).limit(min(int(filters.get("limit", 50)), 100))
             return [self._item(item, pref, source, connection, group) for item, pref, source, connection, group in session.execute(query).all()]
 
     def get_item(self, owner_id: str, item_id: str) -> dict:
@@ -626,7 +626,7 @@ class Service:
                 .join(m.CourseSelection, m.CourseSelection.source_id == m.CourseSource.id)
                 .outerjoin(m.AnnouncementRead, and_(m.AnnouncementRead.announcement_id == m.Announcement.id, m.AnnouncementRead.owner_id == owner_id))
                 .where(m.Announcement.owner_id == owner_id, m.CourseSelection.selection_state == "selected")
-                .order_by(m.Announcement.published_at.desc()).limit(100)
+                .order_by(m.Announcement.published_at.desc().nullslast()).limit(100)
             ).all()
             return [{**_dict(a, exclude=("owner_id", "body_sanitized")), "read_at": _iso(r.read_at) if r else None} for a, r in rows]
 

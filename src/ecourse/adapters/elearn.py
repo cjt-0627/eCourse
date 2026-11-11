@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import replace
 from datetime import datetime
@@ -130,7 +131,7 @@ class ElearnAdapter(NthuSsoMixin):
         return False
 
     async def discover_courses(self, storage_state: dict[str, Any]) -> FetchResult:
-        context = await self.browser.new_context(storage_state=storage_state)
+        context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
         try:
@@ -198,7 +199,7 @@ class ElearnAdapter(NthuSsoMixin):
     async def fetch_course(self, storage_state: dict[str, Any], remote_course_id: str) -> FetchResult:
         if not remote_course_id.isdigit():
             return FetchResult((), (), False, ("invalid_remote_course_id",))
-        context = await self.browser.new_context(storage_state=storage_state)
+        context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
         try:
@@ -263,8 +264,12 @@ class ElearnAdapter(NthuSsoMixin):
             complete = complete and not root_warning
             if forum_limit_exceeded:
                 warnings.append("elearn_forum_container_limit")
-            for forum_url in forum_urls[: self.max_forum_containers]:
-                forum_complete, forum_items, forum_warnings = await self._fetch_forum_discussions(page, forum_url, remote_course_id)
+            await page.close()
+            forum_results = await asyncio.gather(
+                *(self._fetch_forum_discussions(context, forum_url, remote_course_id)
+                  for forum_url in forum_urls[: self.max_forum_containers])
+            )
+            for forum_complete, forum_items, forum_warnings in forum_results:
                 complete = complete and forum_complete
                 warnings.extend(forum_warnings)
                 for item in forum_items:
@@ -280,56 +285,61 @@ class ElearnAdapter(NthuSsoMixin):
         finally:
             await context.close()
 
-    async def _fetch_forum_discussions(self, page: Page, forum_url: str, course_id: str) -> tuple[bool, tuple[CourseItem, ...], tuple[str, ...]]:
+    async def _fetch_forum_discussions(self, context, forum_url: str, course_id: str) -> tuple[bool, tuple[CourseItem, ...], tuple[str, ...]]:
         forum_id = parse_qs(urlparse(forum_url).query).get("id", [None])[0]
         if not forum_id:
             return False, (), ("elearn_forum_invalid_id",)
-        queue = [forum_url]
-        seen: set[str] = set()
-        items: dict[str, CourseItem] = {}
-        complete = True
-        warnings: list[str] = []
-        while queue and len(seen) < self.max_forum_pages:
-            url = queue.pop(0)
-            if url in seen:
-                continue
-            try:
-                await self._goto(page, url)
-            except PlaywrightTimeoutError:
+        page = await context.new_page()
+        page.set_default_timeout(self.timeout_ms)
+        try:
+            queue = [forum_url]
+            seen: set[str] = set()
+            items: dict[str, CourseItem] = {}
+            complete = True
+            warnings: list[str] = []
+            while queue and len(seen) < self.max_forum_pages:
+                url = queue.pop(0)
+                if url in seen:
+                    continue
+                try:
+                    await self._goto(page, url)
+                except PlaywrightTimeoutError:
+                    complete = False
+                    warnings.append("elearn_forum_upstream_timeout")
+                    break
+                except ValueError:
+                    complete = False
+                    warnings.append("unexpected_redirect")
+                    break
+                if await _page_session_expired(page):
+                    return False, tuple(items.values()), ("session_expired",)
+                forum_root = page.locator("#page-mod-forum-view, .forumheaderlist, [data-region='forum-index'], .discussion-list")
+                if await forum_root.count() == 0:
+                    complete = False
+                    warnings.append("elearn_forum_parser_changed")
+                    break
+                seen.add(url)
+                html = await page.content()
+                parsed = parse_course_content(html, page.url, self.platform, course_id)
+                for item in parsed.items:
+                    if item.kind == "announcement":
+                        items[item.remote_id] = item
+                for next_url in parse_moodle_forum_pages(html, page.url, forum_id):
+                    if next_url not in seen and next_url not in queue:
+                        queue.append(next_url)
+            if queue:
                 complete = False
-                warnings.append("elearn_forum_upstream_timeout")
-                break
-            except ValueError:
-                complete = False
-                warnings.append("unexpected_redirect")
-                break
-            if await _page_session_expired(page):
-                return False, tuple(items.values()), ("session_expired",)
-            forum_root = page.locator("#page-mod-forum-view, .forumheaderlist, [data-region='forum-index'], .discussion-list")
-            if await forum_root.count() == 0:
-                complete = False
-                warnings.append("elearn_forum_parser_changed")
-                break
-            seen.add(url)
-            html = await page.content()
-            parsed = parse_course_content(html, page.url, self.platform, course_id)
-            for item in parsed.items:
-                if item.kind == "announcement":
-                    items[item.remote_id] = item
-            for next_url in parse_moodle_forum_pages(html, page.url, forum_id):
-                if next_url not in seen and next_url not in queue:
-                    queue.append(next_url)
-        if queue:
-            complete = False
-            warnings.append("elearn_forum_page_limit")
-        return complete, tuple(items.values()), tuple(warnings)
+                warnings.append("elearn_forum_page_limit")
+            return complete, tuple(items.values()), tuple(warnings)
+        finally:
+            await page.close()
 
     async def fetch_item_detail(self, storage_state: dict[str, Any], item_ref: CourseItem) -> FetchResult:
         parsed_url = urlparse(item_ref.url)
         allowed_paths = ("/mod/assign/", "/mod/quiz/", "/mod/forum/", "/mod/resource/", "/mod/page/", "/mod/url/")
         if parsed_url.scheme != "https" or parsed_url.hostname != "elearn.nthu.edu.tw" or not any(path in parsed_url.path for path in allowed_paths):
             return FetchResult((), (), False, ("invalid_item_ref",))
-        context = await self.browser.new_context(storage_state=storage_state)
+        context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
         try:

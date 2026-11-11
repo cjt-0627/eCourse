@@ -197,6 +197,20 @@ class _FakeForumPage:
     async def content(self) -> str:
         return self.html
 
+    async def close(self) -> None:
+        pass
+
+    def set_default_timeout(self, ms: int) -> None:
+        pass
+
+
+class _FakeForumContext:
+    def __init__(self, page: _FakeForumPage):
+        self._page = page
+
+    async def new_page(self):
+        return self._page
+
 
 class _FixtureElearnAdapter(ElearnAdapter):
     async def _goto(self, page, url: str) -> None:
@@ -211,7 +225,7 @@ def test_forum_followup_reads_multiple_pages_and_deduplicates() -> None:
         second: '<body id="page-mod-forum-view"><a href="/mod/forum/discuss.php?d=1">公告一</a><a href="/mod/forum/discuss.php?d=2">公告二</a></body>',
     })
     adapter = _FixtureElearnAdapter(browser=object())
-    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(page, first, "101"))
+    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(_FakeForumContext(page), first, "101"))
     assert complete is True
     assert [(item.remote_id, item.title) for item in items] == [("1", "公告一"), ("2", "公告二")]
     assert warnings == ()
@@ -224,7 +238,7 @@ def test_forum_timeout_keeps_already_fetched_discussions_as_partial() -> None:
         first: '<body id="page-mod-forum-view"><a href="/mod/forum/discuss.php?d=1">已讀公告</a><a href="/mod/forum/view.php?id=77&page=1">下一頁</a></body>',
     }, timeout_url=second)
     adapter = _FixtureElearnAdapter(browser=object())
-    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(page, first, "101"))
+    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(_FakeForumContext(page), first, "101"))
     assert complete is False
     assert [item.remote_id for item in items] == ["1"]
     assert warnings == ("elearn_forum_upstream_timeout",)
@@ -238,7 +252,7 @@ def test_forum_page_limit_keeps_records_and_marks_partial() -> None:
     })
     adapter = _FixtureElearnAdapter(browser=object())
     adapter.max_forum_pages = 1
-    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(page, first, "101"))
+    complete, items, warnings = asyncio.run(adapter._fetch_forum_discussions(_FakeForumContext(page), first, "101"))
     assert complete is False
     assert [item.remote_id for item in items] == ["1"]
     assert warnings == ("elearn_forum_page_limit",)

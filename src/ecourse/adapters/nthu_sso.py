@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from playwright.async_api import Browser, BrowserContext, Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError
 
+from .shared_context import SharedContextPool
 from .base import (
     AdapterStatus,
     CaptchaSolver,
@@ -67,6 +68,11 @@ class NthuSsoMixin:
         self.timeout_ms = timeout_ms
         self._attempts: dict[str, LoginAttempt] = {}
         self._lock = asyncio.Lock()
+        self._context_pool = SharedContextPool()
+
+    async def _fetch_context(self, storage_state: dict[str, Any]):
+        """A context for reading pages; pages of one sync share it (and its cache)."""
+        return await self._context_pool.lease(self.browser, storage_state)
 
     async def begin_login(
         self, account: str, password: str, storage_state: dict[str, Any] | None = None,

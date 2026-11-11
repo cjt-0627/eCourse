@@ -55,6 +55,14 @@ eLearn 已實作 Moodle 課程目錄、課程頁的 assignment/quiz/forum/resour
 
 去識別化 fixtures 位於 `tests/fixtures/platforms/`。擷取器只在瀏覽器記憶體中 clone 必要 DOM，移除 email、姓名、學號、長 token、query string、內容與真實 ID 後才落盤；`manifest.json` 記錄檔案清單，原始私人 HTML 不落盤。
 
+## eeclass 抓取方式（HTTP 優先，瀏覽器為後備）
+
+登入（SSO、驗證碼）仍由瀏覽器完成。登入後，eeclass 的課程目錄、四種列表頁、作業與測驗詳情、個人報告頁，以及公告內文（列表頁每則公告 `data-url` 指向的 `/bulletin/content/`），都以保存的 cookie 用 `httpx` 直接請求並沿用既有解析器，實測單一請求約 0.05–0.2 秒。程式在 `src/ecourse/adapters/eeclass_http.py`。
+
+遇到非正常頁面（JavaScript 機器人驗證頁、非 200 狀態、非預期主機、無法辨識的版面）時，自動退回原本的瀏覽器路徑，不嘗試繞過驗證。逾時與 429 則直接回報為部分結果。請求只送往 `eeclass.nthu.edu.tw`，且只帶該網域的 cookie；同一程序同時最多 6 個請求，同一課程的公告列表頁 60 秒內共用一份。設定 `ECOURSE_EECLASS_HTTP=0` 可整個停用 HTTP 路徑。
+
+eLearn 的 `/course/view.php` 前方有 JavaScript 機器人驗證，純 HTTP 取得的是驗證頁，因此 eLearn 仍使用瀏覽器。
+
 ## 尚待真實帳號唯讀驗證
 
 以下不可由公開頁面證實，因此 adapter 不會假裝完整成功：

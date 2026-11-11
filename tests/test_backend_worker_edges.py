@@ -909,3 +909,62 @@ def test_identity_mismatch_terminates_waiting_job(backend):
     with db.session() as session:
         waiting = session.get(SyncJob, job["id"])
         assert waiting.state == "failed" and waiting.error_code == "identity_mismatch"
+
+
+def test_listing_pass_keeps_existing_announcement_body_and_empty_bodies_back_off(backend):
+    settings, db, owner = backend
+    service, public, job_data = _connection_job(settings, db, owner)
+    now = datetime(2026, 10, 5, 8, tzinfo=UTC)
+    with db.session() as session:
+        group = CourseGroup(owner_id=owner.id, display_name="課程", term="2026")
+        source = CourseSource(owner_id=owner.id, connection_id=public["connection"]["id"], remote_course_id="1", title="課程")
+        session.add_all((group, source)); session.flush()
+        session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1))
+        session.get(SyncJob, job_data["id"]).preferences_version = 1
+        source_id = source.id
+        session.add(Announcement(owner_id=owner.id, source_course_id=source_id, remote_id="old", title="舊公告", body_sanitized="內文", source_updated_at=now - timedelta(hours=1)))
+
+    claimed = Worker(settings, worker_id="claimer").claim_job()
+    worker = Worker(settings, worker_id="worker", clock=lambda: now)
+    listing = [{"item": {"remote_id": "old", "kind": "announcement", "title": "舊公告", "url": "https://example.test/old"}, "content_text": None, "published_at": None}]
+    asyncio.run(worker._commit_content(claimed.id, source_id, listing, complete=False, warnings=[]))
+    with db.session() as session:
+        kept = session.scalar(select(Announcement).where(Announcement.remote_id == "old"))
+        assert kept.body_sanitized == "內文"
+        assert worker._needs_announcement_refresh(kept) is False
+
+    empty = {"item": {"remote_id": "empty", "kind": "announcement", "title": "空", "url": "https://example.test/empty"}, "content_text": None, "published_at": None}
+    asyncio.run(worker._commit_content(claimed.id, source_id, [empty], complete=False, warnings=[], detail_pass=True))
+    with db.session() as session:
+        record = session.scalar(select(Announcement).where(Announcement.remote_id == "empty"))
+        assert record.source_updated_at is not None and not record.body_sanitized
+        assert worker._needs_announcement_refresh(record) is False
+    later = Worker(settings, worker_id="later", clock=lambda: now + timedelta(hours=7))
+    with db.session() as session:
+        record = session.scalar(select(Announcement).where(Announcement.remote_id == "empty"))
+        assert later._needs_announcement_refresh(record) is True
+
+
+def test_course_navigation_announcement_link_is_not_fetched():
+    from ecourse.worker import _is_placeholder_announcement
+    nav = CourseItem(remote_id="33843", kind="announcement", title="公告", url="https://eeclass.nthu.edu.tw/course/bulletin/33843")
+    real = CourseItem(remote_id="33843:1", kind="announcement", title="公告", url="https://eeclass.nthu.edu.tw/course/bulletin/33843")
+    assert _is_placeholder_announcement(nav) is True
+    assert _is_placeholder_announcement(real) is False
+
+
+def test_old_work_with_unread_status_is_retried_at_most_daily(backend):
+    settings, db, owner = backend
+    now = datetime(2026, 11, 11, 8, tzinfo=UTC)
+    worker = Worker(settings, worker_id="worker", clock=lambda: now)
+
+    def item(status, checked_hours_ago, **extra):
+        return LearningItem(
+            owner_id=owner.id, source_course_id="source", remote_item_id="x", kind="assignment",
+            title="x", remote_status=status, status_checked_at=now - timedelta(hours=checked_hours_ago),
+            due_at=datetime(2026, 9, 1, tzinfo=UTC), **extra,
+        )
+
+    assert worker._needs_detail_refresh(item("unknown", 30)) is True       # never read, a day has passed
+    assert worker._needs_detail_refresh(item("unknown", 2)) is False       # tried recently
+    assert worker._needs_detail_refresh(item("not_submitted", 30)) is False  # old and settled
