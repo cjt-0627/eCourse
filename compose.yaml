@@ -12,6 +12,15 @@ x-ecourse-environment: &ecourse-environment
 x-ecourse-service: &ecourse-service
   image: ${ECOURSE_IMAGE:-ghcr.io/cjt-0627/ecourse:latest}
   environment: *ecourse-environment
+  entrypoint:
+    - /bin/sh
+    - -ec
+    - |
+      umask 077
+      mkdir -p "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
+      chmod 700 "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
+      exec "$@"
+    - --
   volumes:
     - ecourse-secrets:/var/lib/ecourse/secrets
     - ecourse-runtime:/run/ecourse
@@ -39,6 +48,7 @@ services:
     <<: *ecourse-service
     command: ["ecourse", "migrate"]
     restart: "no"
+    profiles: ["maintenance"]
 
   web:
     <<: *ecourse-service
@@ -50,8 +60,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health/ready', timeout=3).read()"]
       interval: 10s
@@ -67,8 +75,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
 
 volumes:
   postgres-data:

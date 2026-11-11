@@ -97,10 +97,11 @@ cp .env.example .env
 # 編輯 .env，至少替換 POSTGRES_PASSWORD
 docker compose pull
 docker compose up -d postgres
-docker compose run --rm migrate
 ```
 
 全新安裝請先執行 `docker compose run --rm web ecourse init`，再執行 `docker compose up -d web worker`。資料庫與應用程式密鑰保存在 Docker named volumes；不要使用 `docker compose down -v`，否則資料與密鑰都會被刪除。
+
+日後更新 image 時，先執行 `docker compose --profile maintenance run --rm migrate`，再重新啟動 Web 與 Worker。
 
 ## 管理與驗證指令
 
