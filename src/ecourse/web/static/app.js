@@ -265,6 +265,18 @@ async function watchSync(jobs) {
 }
 
 const login = document.querySelector("#login-form");
+const setup = document.querySelector("#setup-form");
+setup?.addEventListener("submit", event => {
+  event.preventDefault();
+  withForm(setup, async () => {
+    const error = document.querySelector("#setup-error");
+    error.textContent = "";
+    try {
+      await api("/api/v1/setup", {method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(setup)))});
+      location.reload();
+    } catch (reason) { error.textContent = reason.message; }
+  });
+});
 async function watchSchoolLogin() {
   const box = document.querySelector("#login-challenge");
   while (box) {

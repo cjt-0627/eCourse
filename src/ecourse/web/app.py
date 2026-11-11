@@ -50,6 +50,10 @@ class LoginBody(BaseModel):
     csrf_token: str
 
 
+class SetupBody(BaseModel):
+    csrf_token: str
+
+
 class CredentialsBody(BaseModel):
     account: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=1, max_length=1024)
@@ -274,6 +278,25 @@ def create_app(settings=None) -> FastAPI:
         response = _data(request, result, 202)
         response.set_cookie(SCHOOL_AUTH_COOKIE, exchange, httponly=True, samesite="lax", secure=_origin(settings).startswith("https://"), max_age=600, path="/api/v1/auth/school")
         return response
+
+    @app.post("/api/v1/setup")
+    def setup(request: Request, body: SetupBody):
+        cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
+        local_host = urlsplit(settings.base_url).hostname in {"localhost", "127.0.0.1", "::1"}
+        if request.headers.get("origin") != _origin(settings) or not cookie or not secrets.compare_digest(cookie, body.csrf_token):
+            return _error(request, 403, "csrf_failed", "安全驗證已失效，請重新整理後再試。")
+        if settings.environment != "local" or not local_host:
+            return _error(request, 403, "setup_not_allowed", "此部署不允許透過網頁初始化。")
+        if _ready(db):
+            return _error(request, 409, "already_initialized", "系統已完成初始化。")
+        try:
+            # This calls the same locked bootstrap routine as the CLI without
+            # exposing any command or secret material to the browser.
+            from ecourse.cli import initialize
+            initialize(settings)
+        except (OSError, ValueError) as error:
+            return _error(request, 500, "setup_failed", str(error), True)
+        return _data(request, {"initialized": True}, 201)
 
     def school_exchange(request: Request, *, write: bool = False) -> str:
         origin_ok = request.headers.get("origin") == _origin(settings)

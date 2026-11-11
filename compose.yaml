@@ -1,20 +1,31 @@
 x-ecourse-environment: &ecourse-environment
-  ECOURSE_ENV: local
-  ECOURSE_BASE_URL: http://localhost:8765
-  ECOURSE_ALLOWED_HOSTS: localhost,127.0.0.1
-  ECOURSE_DATABASE_URL: postgresql+psycopg://ecourse:${POSTGRES_PASSWORD}@postgres:5432/ecourse
+  ECOURSE_ENV: ${ECOURSE_ENV:-local}
+  ECOURSE_BASE_URL: ${ECOURSE_BASE_URL:-http://localhost:8765}
+  ECOURSE_ALLOWED_HOSTS: ${ECOURSE_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  # POSTGRES_PASSWORD must be URL-safe because it is part of this connection URL.
+  ECOURSE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ecourse}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}@postgres:5432/${POSTGRES_DB:-ecourse}
   ECOURSE_DATA_DIR: /var/lib/ecourse/data
   ECOURSE_SECRET_DIR: /var/lib/ecourse/secrets
   ECOURSE_RUNTIME_DIR: /run/ecourse
   ECOURSE_CHROMIUM_SANDBOX: "false"
 
 x-ecourse-service: &ecourse-service
-  build:
-    context: .
-  image: ecourse-app:local
+  image: ${ECOURSE_IMAGE:-ghcr.io/cjt-0627/ecourse:latest}
   environment: *ecourse-environment
+  entrypoint:
+    - /bin/sh
+    - -ec
+    - |
+      umask 077
+      mkdir -p "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
+      chmod 700 "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
+      if [ "$${1:-}" = "ecourse" ] && [ "$${2:-}" = "migrate" ] && [ ! -f "$${ECOURSE_SECRET_DIR}/master-v1.key" ]; then
+        exit 0
+      fi
+      exec "$@"
+    - --
   volumes:
-    - ./.secrets:/var/lib/ecourse/secrets
+    - ecourse-secrets:/var/lib/ecourse/secrets
     - ecourse-runtime:/run/ecourse
   depends_on:
     postgres:
@@ -22,16 +33,16 @@ x-ecourse-service: &ecourse-service
 
 services:
   postgres:
-    image: postgres:17-bookworm
+    image: ${POSTGRES_IMAGE:-postgres:17-bookworm}
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ecourse
-      POSTGRES_USER: ecourse
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ecourse}
+      POSTGRES_USER: ${POSTGRES_USER:-ecourse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ecourse -d ecourse"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -47,7 +58,7 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "127.0.0.1:8765:8765"
+      - "127.0.0.1:${ECOURSE_PORT:-8765}:8765"
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,7 +72,12 @@ services:
 
   worker:
     <<: *ecourse-service
-    command: ["ecourse", "worker"]
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        until python -c "import urllib.request; urllib.request.urlopen('http://web:8765/health/ready', timeout=3).read()"; do sleep 2; done
+        exec ecourse worker
     restart: unless-stopped
     init: true
     shm_size: 1gb
@@ -71,43 +87,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  import-sqlite:
-    <<: *ecourse-service
-    command: ["ecourse", "import-sqlite", "/legacy/ecourse.sqlite3"]
-    profiles: ["tools"]
-    volumes:
-      - ./.secrets:/var/lib/ecourse/secrets
-      - ./.data:/legacy:ro
-      - ecourse-runtime:/run/ecourse
-
-  backup:
-    image: postgres:17-bookworm
-    profiles: ["tools"]
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-    entrypoint: ["/bin/sh", "/scripts/postgres_backup.sh"]
-    volumes:
-      - ./scripts/postgres_backup.sh:/scripts/postgres_backup.sh:ro
-      - ./.backups:/backups
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  restore:
-    image: postgres:17-bookworm
-    profiles: ["tools"]
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      ALLOW_RESTORE: ${ALLOW_RESTORE:-no}
-      RESTORE_FILE: ${RESTORE_FILE:-}
-    entrypoint: ["/bin/sh", "/scripts/postgres_restore.sh"]
-    volumes:
-      - ./scripts/postgres_restore.sh:/scripts/postgres_restore.sh:ro
-      - ./.backups:/backups:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-
 volumes:
   postgres-data:
+  ecourse-secrets:
   ecourse-runtime:
