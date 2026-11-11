@@ -62,6 +62,21 @@ def login(client, name="owner", password="a-long-local-password"):
     return {"Origin": ORIGIN, "X-CSRF-Token": csrf}
 
 
+def test_first_run_is_initialized_from_the_login_ui(tmp_path):
+    data, secrets = tmp_path / "data", tmp_path / "secrets"
+    settings = Settings(data, secrets, base_url=ORIGIN)
+    with TestClient(create_app(settings), base_url=ORIGIN) as client:
+        page = client.get("/login")
+        assert page.status_code == 200 and 'id="setup-form"' in page.text
+        token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        initialized = client.post("/api/v1/setup", headers={"Origin": ORIGIN}, json={"csrf_token": token})
+        assert initialized.status_code == 201
+        assert initialized.json()["data"] == {"initialized": True}
+        assert 'id="login-form"' in client.get("/login").text
+    assert Database(settings).ready()
+    assert (secrets / "master-v1.key").exists()
+
+
 def test_login_event_crud_reminders_and_logout(web):
     client, _settings, _db, _owner = web
     headers = login(client)
@@ -357,14 +372,14 @@ def test_owner_isolation_and_host_allowlist(web):
     assert client.get("/health/live", headers={"Host": "evil.test"}).status_code == 400
 
 
-def test_uninitialized_root_does_not_offer_public_setup(tmp_path):
+def test_uninitialized_root_offers_local_setup_ui(tmp_path):
     settings = Settings(tmp_path / "data", tmp_path / "secrets", base_url=ORIGIN)
     with TestClient(create_app(settings), base_url=ORIGIN) as client:
         response = client.get("/", follow_redirects=False)
         assert response.status_code == 303
         page = client.get("/login")
-        assert "ecourse init" in page.text
-        assert "建立擁有者" not in [route.path for route in client.app.routes]
+        assert 'id="setup-form"' in page.text
+        assert "/api/v1/setup" in [route.path for route in client.app.routes]
 
 
 def test_login_and_settings_only_present_school_credentials(web, monkeypatch):

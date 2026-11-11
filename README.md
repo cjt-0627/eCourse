@@ -96,12 +96,10 @@ uv run ecourse start --browser brave
 cp .env.example .env
 # 編輯 .env，至少替換 POSTGRES_PASSWORD
 docker compose pull
-docker compose up -d postgres
+docker compose up -d
 ```
 
-全新安裝請先執行 `docker compose run --rm web ecourse init`，再執行 `docker compose up -d web worker`。資料庫與應用程式密鑰保存在 Docker named volumes；不要使用 `docker compose down -v`，否則資料與密鑰都會被刪除。
-
-日後更新 image 時，先執行 `docker compose --profile maintenance run --rm migrate`，再重新啟動 Web 與 Worker。
+首次開啟 `http://localhost:8765` 時，網站會顯示「開始設定」按鈕；它會安全建立加密金鑰、套用資料庫 migration，之後就能以校務帳密登入。資料庫與應用程式密鑰保存在 Docker named volumes；不要使用 `docker compose down -v`，否則資料與密鑰都會被刪除。更新 image 時 Compose 會自動套用 migration。
 
 ## 管理與驗證指令
 

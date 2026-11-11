@@ -19,6 +19,9 @@ x-ecourse-service: &ecourse-service
       umask 077
       mkdir -p "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
       chmod 700 "$${ECOURSE_DATA_DIR}" "$${ECOURSE_SECRET_DIR}" "$${ECOURSE_RUNTIME_DIR}"
+      if [ "$${1:-}" = "ecourse" ] && [ "$${2:-}" = "migrate" ] && [ ! -f "$${ECOURSE_SECRET_DIR}/master-v1.key" ]; then
+        exit 0
+      fi
       exec "$@"
     - --
   volumes:
@@ -48,7 +51,6 @@ services:
     <<: *ecourse-service
     command: ["ecourse", "migrate"]
     restart: "no"
-    profiles: ["maintenance"]
 
   web:
     <<: *ecourse-service
@@ -60,6 +62,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health/ready', timeout=3).read()"]
       interval: 10s
@@ -68,13 +72,20 @@ services:
 
   worker:
     <<: *ecourse-service
-    command: ["ecourse", "worker"]
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        until python -c "import urllib.request; urllib.request.urlopen('http://web:8765/health/ready', timeout=3).read()"; do sleep 2; done
+        exec ecourse worker
     restart: unless-stopped
     init: true
     shm_size: 1gb
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
