@@ -382,6 +382,14 @@ def test_uninitialized_root_offers_local_setup_ui(tmp_path):
         assert "/api/v1/setup" in [route.path for route in client.app.routes]
 
 
+def test_uninitialized_root_ignores_a_stale_session_cookie(tmp_path):
+    settings = Settings(tmp_path / "data", tmp_path / "secrets", base_url=ORIGIN)
+    with TestClient(create_app(settings), base_url=ORIGIN, cookies={"ecourse_session": "stale"}) as client:
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/login"
+
+
 def test_login_and_settings_only_present_school_credentials(web, monkeypatch):
     client, *_ = web
     login_page = client.get("/login").text

@@ -121,6 +121,11 @@ def create_session(db: Database, owner_id, device_label: str | None = None) -> t
 def authenticate_session(db: Database, raw_token: str | None) -> tuple[Owner, AppSession] | None:
     if not raw_token:
         return None
+    # A browser can retain a session cookie after its Docker database volume has
+    # been recreated. Until the first-run UI creates the schema, there is no
+    # session table to query; treat that stale cookie as signed out.
+    if not db.ready():
+        return None
     now = _now()
     with db.session() as session:
         app_session = session.query(AppSession).filter(AppSession.token_hash == token_hash(raw_token)).first()
