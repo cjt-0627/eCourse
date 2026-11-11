@@ -90,39 +90,17 @@ uv run ecourse start --browser brave
 
 ## Docker Compose（PostgreSQL）
 
-容器部署使用 PostgreSQL，Web 與 Worker 分開執行，並且只將網站發布到宿主機 `127.0.0.1:8765`。請先從 `.env.docker` 設定強密碼，然後執行：
+容器部署使用 PostgreSQL，Web 與 Worker 分開執行，並且只將網站發布到宿主機 `127.0.0.1:8765`。預設使用 GitHub Container Registry 的 multi-arch image（x86_64 與 ARM64）。將 `compose.yaml` 與 `.env.example` 複製到任意空目錄，再把範本命名為 `.env` 並設定強密碼：
 
 ```sh
-docker compose --env-file .env.docker build
-docker compose --env-file .env.docker up -d postgres
-docker compose --env-file .env.docker run --rm migrate
+cp .env.example .env
+# 編輯 .env，至少替換 POSTGRES_PASSWORD
+docker compose pull
+docker compose up -d postgres
+docker compose run --rm migrate
 ```
 
-全新安裝請先執行 `docker compose --env-file .env.docker run --rm web ecourse init`，再執行 `docker compose --env-file .env.docker up -d web worker`。
-
-若手上有舊版 SQLite 資料庫（`.data/ecourse.sqlite3`），可在第一次啟動 Web/Worker 前匯入。匯入只接受空的 PostgreSQL，目標已有資料時會拒絕：
-
-```sh
-docker compose --env-file .env.docker --profile tools run --rm import-sqlite
-docker compose --env-file .env.docker up -d web worker
-```
-
-本專案原有的 SQLite 資料已遷移完成，舊檔已刪除；現在的資料以 PostgreSQL 為準。容器共用專案的 `.secrets` 主金鑰與 IPC token；請勿提交或遺失此目錄。
-
-PostgreSQL 備份使用與 server 同主版本的 `pg_dump`，會寫入 `.backups/ecourse-<UTC timestamp>.dump` 並以 `pg_restore --list` 驗證：
-
-```sh
-docker compose --env-file .env.docker --profile tools run --rm backup
-```
-
-備份不包含 `.secrets/master-v1.key`，必須另行安全保存。還原會刪除 PostgreSQL `public` schema，只能在先停止 Web 與 Worker 後明確授權：
-
-```sh
-docker compose --env-file .env.docker stop web worker
-ALLOW_RESTORE=yes RESTORE_FILE=/backups/ecourse-YYYYMMDDTHHMMSSZ.dump \
-  docker compose --env-file .env.docker --profile tools run --rm restore
-docker compose --env-file .env.docker up -d web worker
-```
+全新安裝請先執行 `docker compose run --rm web ecourse init`，再執行 `docker compose up -d web worker`。資料庫與應用程式密鑰保存在 Docker named volumes；不要使用 `docker compose down -v`，否則資料與密鑰都會被刪除。
 
 ## 管理與驗證指令
 
@@ -138,7 +116,7 @@ PLAYWRIGHT_BROWSERS_PATH="$PWD/.cache/ms-playwright" .venv/bin/ecourse doctor --
 
 本機模式沒有另一組 eCourse 密碼，也沒有公開註冊或重設密碼 API。既有 P0 `init-vault` 只建立金鑰；完整本機初始化請用 `init`。Production 的管理員 bootstrap 保留終端密碼流程；一旦成功切換為校務帳密登入，就不能重新啟用獨立密碼。
 
-`.env.example` 是設定參考，不會自動載入。資料與金鑰路徑必須為互不包含的絕對路徑。金鑰遺失時不自動建立新金鑰；備份必須保留原主金鑰。不要把 `.data`、`.secrets`、真實帳密、Cookie、私人網頁或備份提交版本控制。
+Compose 會自動讀取同目錄的 `.env`；請勿提交這個檔案或其中的真實密碼。資料與金鑰保存在 Docker named volumes；金鑰遺失時不會自動建立新金鑰，備份時也必須保留該 volume。
 
 ## 尚未完成的範圍與目前進度
 
