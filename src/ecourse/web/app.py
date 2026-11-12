@@ -256,8 +256,8 @@ def create_app(settings=None) -> FastAPI:
 
     @app.post("/api/v1/auth/login")
     def login(request: Request, body: LoginBody):
-        cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
-        if request.headers.get("origin") != _origin(settings) or not cookie or not secrets.compare_digest(cookie, body.csrf_token):
+        supplied = request.headers.get("x-csrf-token", "")
+        if request.headers.get("origin") != _origin(settings) or not supplied or not secrets.compare_digest(supplied, body.csrf_token):
             return _error(request, 403, "csrf_failed", "安全驗證已失效，請重新整理後再試。")
         ip = request.client.host if request.client else "unknown"
         if not app.state.login_limiter.allow(f"ip:{ip}") or not app.state.login_limiter.allow(f"account:{body.login_name.casefold()}"):

@@ -56,7 +56,7 @@ def web(tmp_path):
 def login(client, name="owner", password="a-long-local-password"):
     page = client.get("/login")
     token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    response = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN}, json={"login_name": name, "password": password, "csrf_token": token})
+    response = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN, "X-CSRF-Token": token}, json={"login_name": name, "password": password, "csrf_token": token})
     assert response.status_code == 200
     csrf = client.get("/api/v1/auth/me").json()["data"]["csrf_token"]
     return {"Origin": ORIGIN, "X-CSRF-Token": csrf}
@@ -335,7 +335,8 @@ def test_csrf_origin_cookie_headers_and_generic_errors(web):
     client, _settings, _db, _owner = web
     page = client.get("/login")
     token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-    response = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN}, json={"login_name": "owner", "password": "a-long-local-password", "csrf_token": token})
+    assert client.post("/api/v1/auth/login", headers={"Origin": ORIGIN}, json={"login_name": "owner", "password": "a-long-local-password", "csrf_token": token}).status_code == 403
+    response = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN, "X-CSRF-Token": token}, json={"login_name": "owner", "password": "a-long-local-password", "csrf_token": token})
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie
     csrf = client.get("/api/v1/auth/me").json()["data"]["csrf_token"]
@@ -429,7 +430,7 @@ def test_school_login_pending_exchange_completes_with_http_only_cookie(tmp_path,
     with TestClient(create_app(settings), base_url=ORIGIN) as client:
         page = client.get("/login")
         token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-        started = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN}, json={"login_name": "school-id", "password": "school-password", "csrf_token": token})
+        started = client.post("/api/v1/auth/login", headers={"Origin": ORIGIN, "X-CSRF-Token": token}, json={"login_name": "school-id", "password": "school-password", "csrf_token": token})
         assert started.status_code == 202
         assert "private-exchange" not in started.text and "school-password" not in started.text
         assert "HttpOnly" in started.headers["set-cookie"]
