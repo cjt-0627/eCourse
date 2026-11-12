@@ -30,6 +30,10 @@ def test_local_server_port_updates_origin_and_allows_explicit_container_bind(tmp
     container, port = server_settings(settings, "0.0.0.0", 8765)
     assert container.base_url == "http://localhost:8765"
     assert port == 8765
+    published = Settings(tmp_path / "data", tmp_path / "secrets", base_url="http://localhost:6767")
+    container, port = server_settings(published, "0.0.0.0", 8765)
+    assert container.base_url == "http://localhost:6767"
+    assert port == 8765
 
 
 def test_mobile_settings_require_online_tailscale_and_use_private_https(tmp_path, monkeypatch):
