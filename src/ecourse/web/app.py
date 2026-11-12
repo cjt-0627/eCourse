@@ -281,9 +281,13 @@ def create_app(settings=None) -> FastAPI:
 
     @app.post("/api/v1/setup")
     def setup(request: Request, body: SetupBody):
-        cookie = request.cookies.get(PRE_CSRF_COOKIE, "")
+        supplied = request.headers.get("x-csrf-token", "")
         local_host = urlsplit(settings.base_url).hostname in {"localhost", "127.0.0.1", "::1"}
-        if request.headers.get("origin") != _origin(settings) or not cookie or not secrets.compare_digest(cookie, body.csrf_token):
+        # A cross-origin page cannot send this JSON request with a custom
+        # header without a CORS preflight, which this app does not permit.
+        # Do not also require the pre-login cookie: some browsers retain a
+        # stale cookie while serving a freshly rendered first-run page.
+        if request.headers.get("origin") != _origin(settings) or not supplied or not secrets.compare_digest(supplied, body.csrf_token):
             return _error(request, 403, "csrf_failed", "安全驗證已失效，請重新整理後再試。")
         if settings.environment != "local" or not local_host:
             return _error(request, 403, "setup_not_allowed", "此部署不允許透過網頁初始化。")

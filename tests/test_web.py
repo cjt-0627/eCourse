@@ -69,7 +69,7 @@ def test_first_run_is_initialized_from_the_login_ui(tmp_path):
         page = client.get("/login")
         assert page.status_code == 200 and 'id="setup-form"' in page.text
         token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
-        initialized = client.post("/api/v1/setup", headers={"Origin": ORIGIN}, json={"csrf_token": token})
+        initialized = client.post("/api/v1/setup", headers={"Origin": ORIGIN, "X-CSRF-Token": token}, json={"csrf_token": token})
         assert initialized.status_code == 201
         assert initialized.json()["data"] == {"initialized": True}
         assert 'id="login-form"' in client.get("/login").text
