@@ -319,7 +319,9 @@ def server_settings(settings: Settings, host: str, port: int | None) -> tuple[Se
     port = port or url.port or (443 if url.scheme == "https" else 80)
     if not 1 <= port <= 65535:
         raise ValueError("連接埠必須介於 1 至 65535。")
-    if settings.environment == "local" and url.scheme == "http":
+    # A wildcard bind (e.g. inside a container) says nothing about the public
+    # origin, which may be published on a different host port.
+    if settings.environment == "local" and url.scheme == "http" and host not in {"0.0.0.0", "::"}:
         settings = replace(settings, base_url=f"http://{url.hostname}:{port}")
     return settings, port
 
