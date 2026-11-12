@@ -48,6 +48,9 @@ def test_school_credentials_create_session_only_after_worker_verification(backen
     authenticated = authenticate_session(db, raw_session)
     assert authenticated is not None and authenticated[0].id == owner.id
     assert app_session.device_label == "test browser"
+    with db.session() as session:
+        platforms = {c.platform for c in session.query(PlatformConnection).filter_by(owner_id=owner.id)}
+    assert platforms == {"elearn", "eeclass"}
     assert verify_owner(db, owner.login_name, "a-long-local-password") is None
     with db.session() as session:
         assert session.get(Owner, owner.id).password_hash == SCHOOL_AUTH_DISABLED_PASSWORD

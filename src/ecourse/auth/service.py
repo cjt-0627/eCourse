@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from ecourse.db import Database
 from ecourse.db.models import AppSession, CredentialSecret, LoginAttempt, Owner, PlatformConnection, SchoolLoginExchange
@@ -332,6 +332,15 @@ def complete_school_auth(settings, exchange_token: str) -> tuple[str, AppSession
         session.add(app_session)
         session.flush()
         session.expunge(app_session)
+        owner_id, credential_id = owner.id, credential.id
+        has_eeclass = session.scalar(select(PlatformConnection.id).where(
+            PlatformConnection.owner_id == owner_id, PlatformConnection.platform == "eeclass",
+        )) is not None
+    if not has_eeclass:
+        # The school login verified eLearn only; connect eeclass with the same
+        # credential so the first sync covers both platforms.
+        from ecourse.services import Service
+        Service(settings).connect(owner_id, "eeclass", credential_id)
     return raw_session, app_session
 
 
