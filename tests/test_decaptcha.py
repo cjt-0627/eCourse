@@ -1,5 +1,6 @@
 import asyncio
 from importlib.resources import files
+from pathlib import Path
 
 from ecourse.decaptcha import OAuthCaptchaSolver
 
@@ -59,7 +60,11 @@ def test_bundled_model_and_runtime_are_deployable_package_resources():
     assets = files("ecourse.decaptcha") / "assets"
     assert (assets / "oauth_model.js").stat().st_size > 2_000_000
     assert "predictWithConfidence" in (assets / "oauth_runtime.js").read_text()
-    assert (files("ecourse.decaptcha") / "THIRD_PARTY_NOTICES.txt").is_file()
+
+
+def test_crawler_third_party_notice_is_kept_with_crawler_documents():
+    project_root = Path(__file__).resolve().parents[1]
+    assert (project_root / "crawler" / "THIRD_PARTY_NOTICES.txt").is_file()
 
 
 def test_solver_reuses_local_browser_context_and_returns_calibrated_shape():

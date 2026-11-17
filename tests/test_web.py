@@ -292,6 +292,28 @@ def test_taipei_time_editor_and_new_dialog_reset_are_shipped(web):
     assert '`${raw.starts_at}:00+08:00`' in script
 
 
+def test_unsubmitted_past_due_items_are_overdue_and_default_filter_is_needs_confirmation(web):
+    client, _settings, db, owner = web
+    login(client)
+    with db.session() as session:
+        session.query(PlatformConnection).filter_by(owner_id=owner.id, platform="eeclass").delete()
+        connection = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
+        group = CourseGroup(owner_id=owner.id, display_name="逾期測試課")
+        session.add_all([connection, group]); session.flush()
+        source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="r-1", title="逾期測試課")
+        session.add(source); session.flush()
+        session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1))
+        session.add_all([
+            LearningItem(owner_id=owner.id, source_course_id=source.id, remote_item_id="late", kind="assignment", title="過期未繳", due_at=datetime(2020, 1, 1, tzinfo=UTC), date_precision="exact", remote_status="not_submitted"),
+            LearningItem(owner_id=owner.id, source_course_id=source.id, remote_item_id="soon", kind="assignment", title="未到期未繳", due_at=datetime(2099, 1, 1, tzinfo=UTC), date_precision="exact", remote_status="not_submitted"),
+        ])
+    page = client.get("/todos").text
+    assert 'data-status="overdue"' in page and 'submission-label overdue' in page
+    assert page.count('data-status="unsubmitted"') == 1
+    assert '<option value="open" selected>' in page and '<option value="overdue">' in page
+    assert 'status.value = ""' in client.get("/static/app.js").text
+
+
 def test_todo_filter_can_hide_flex_rows_and_shows_empty_state(web):
     client, *_ = web
     login(client)

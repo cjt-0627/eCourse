@@ -18,6 +18,6 @@
 
 2026-10-05 已用授權帳號唯讀驗收兩平台受保護首頁、登入身分 UI、課程目錄、作業／測驗／公告／教材 route 與部分個人狀態。網站程序停止後，保存的加密 session 可恢復並直接開啟兩平台。未主動破壞有效 Cookie，因此自然失效後的自動重新登入仍待真實驗收；自動測試已覆蓋 session expired → queue reauthentication 的流程。
 
-本輪建立的頁面 fixtures 全部先在記憶體去識別化，未保存原始私人 HTML。實測同時發現並修正 eLearn「評分狀態」被誤當成成績、重複「繳交狀態」標題，以及 eeclass 課程首頁／活動列表 route 不符。詳細 selector、coverage 與尚未完成範圍見 `docs/platforms.md`。
+本輪建立的頁面 fixtures 全部先在記憶體去識別化，未保存原始私人 HTML。實測同時發現並修正 eLearn「評分狀態」被誤當成成績、重複「繳交狀態」標題，以及 eeclass 課程首頁／活動列表 route 不符。
 
 Web Push、PWA、OCR、Raspberry Pi 部署、備份還原與金鑰輪替仍未完成。測試通過不代表這些範圍已完成。

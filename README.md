@@ -149,4 +149,4 @@ Compose 會自動讀取同目錄的 `.env`；請勿提交這個檔案或其中�
 
 若以日常課務使用為優先，接下來應先確認「同步是否完整、登入過期能否恢復」，再完成手機主動通知與實際備份復原演練。驗證碼辨識已存在，不需要再從零開發。
 
-歷次驗收紀錄見 [`docs/acceptance.md`](docs/acceptance.md)，校方平台實測紀錄見 [`docs/platforms.md`](docs/platforms.md)；這兩份紀錄保留當時的進度，部分「未完成」描述早於目前程式。最早的基礎驗證紀錄見 [`docs/feasibility.md`](docs/feasibility.md)，完整產品與驗收要求見 [`ecourse-server-spec.md`](ecourse-server-spec.md)。
+歷次一般功能驗收紀錄見 [`docs/acceptance.md`](docs/acceptance.md)，完整產品與驗收要求見 [`ecourse-server-spec.md`](ecourse-server-spec.md)。部分歷史「未完成」描述早於目前程式，閱讀時請以本頁目前進度為準。
