@@ -444,11 +444,13 @@ language?.querySelectorAll('[name="locale"]').forEach(input => input.addEventLis
 }));
 
 const search = document.querySelector("#todo-search"), status = document.querySelector("#todo-status"), course = document.querySelector("#todo-course"), filterEmpty = document.querySelector("#todo-filter-empty");
+// "待處理": everything that still needs action, i.e. all but submitted items.
+const OPEN_TODO_STATES = new Set(["overdue", "unsubmitted", "unknown", "manual"]);
 function filterTodos() {
   const query = (search?.value || "").trim().toLocaleLowerCase();
   let visible = 0;
   document.querySelectorAll(".todo").forEach(element => {
-    const matches = element.dataset.search.toLocaleLowerCase().includes(query) && (!status?.value || element.dataset.status === status.value) && (!course?.value || element.dataset.course === course.value);
+    const matches = element.dataset.search.toLocaleLowerCase().includes(query) && (!status?.value || (status.value === "open" ? OPEN_TODO_STATES.has(element.dataset.status) : element.dataset.status === status.value)) && (!course?.value || element.dataset.course === course.value);
     element.hidden = !matches;
     if (matches) visible += 1;
   });
@@ -456,7 +458,10 @@ function filterTodos() {
 }
 search?.addEventListener("input", filterTodos); status?.addEventListener("change", filterTodos); course?.addEventListener("change", filterTodos);
 const requestedCourse = new URLSearchParams(location.search).get("course");
-if (course && requestedCourse && [...course.options].some(option => option.value === requestedCourse)) { course.value = requestedCourse; filterTodos(); }
+if (course && requestedCourse && [...course.options].some(option => option.value === requestedCourse)) { course.value = requestedCourse; }
+// Deep links to one item or course must not be hidden by the default filter.
+if (status && (requestedCourse || new URLSearchParams(location.search).get("item") || new URLSearchParams(location.search).get("manual"))) status.value = "";
+filterTodos();
 document.querySelectorAll(".connection[data-attempt]").forEach(row => { const platform=row.querySelector("[data-platform]")?.dataset.platform;if(row.dataset.attempt&&platform)beginAttempt(row.dataset.attempt,platform); });
 const targetParams = new URLSearchParams(location.search), targetId = targetParams.get("item") || targetParams.get("manual");
 if (targetId) { const target = document.querySelector(`[data-id="${CSS.escape(targetId)}"]`)?.closest(".todo"); if (target) { target.classList.add("targeted"); target.scrollIntoView({block: "center"}); } }

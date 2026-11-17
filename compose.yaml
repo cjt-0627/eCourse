@@ -76,7 +76,9 @@ services:
       - /bin/sh
       - -ec
       - |
-        until python -c "import urllib.request; urllib.request.urlopen('http://web:8765/health/ready', timeout=3).read()"; do sleep 2; done
+        # The web service only accepts the Host of ECOURSE_BASE_URL, so probe it
+        # by service name while presenting that Host.
+        until python -c "import os, urllib.request as u, urllib.parse as p; u.urlopen(u.Request('http://web:8765/health/ready', headers={'Host': p.urlsplit(os.environ['ECOURSE_BASE_URL']).hostname}), timeout=3).read()"; do sleep 2; done
         exec ecourse worker
     restart: unless-stopped
     init: true

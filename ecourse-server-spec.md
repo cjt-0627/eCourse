@@ -918,7 +918,7 @@ CI 不連真實帳號、不保存帳密、不發真實通知。測試資料需�
 
 建立最小 Python 原型，分別驗證兩平台 SSO、圖片驗證碼、身分確認、加密 Session 保存、關閉 context 還原、worker 重啟與人工挑戰續接。同時盡早在目標 Pi／ARM64 環境確認 browser 可啟動。
 
-交付 `feasibility.md`，列出實測版本、流程、失敗、驗證碼數據及是否可用 HTTPX。若自動登入或 Pi browser 不可行，先提出具體替代方案與需求差異，再決定後續；不要先花大量時間重畫整個 Dashboard。
+交付一份獨立的可行性紀錄，列出實測版本、流程、失敗、驗證碼數據及是否可用 HTTPX。若自動登入或 Pi browser 不可行，先提出具體替代方案與需求差異，再決定後續；不要先花大量時間重畫整個 Dashboard。
 
 ### P1 後端骨架與持久化同步
 
@@ -999,7 +999,6 @@ ecourse-server/
     compose.yaml
     proxy/
   docs/
-    feasibility.md
     api.md
     deployment.md
     backup-restore.md

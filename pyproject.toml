@@ -32,5 +32,8 @@ dev = ["pytest>=8"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/ecourse"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"crawler/THIRD_PARTY_NOTICES.txt" = "ecourse/decaptcha/THIRD_PARTY_NOTICES.txt"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

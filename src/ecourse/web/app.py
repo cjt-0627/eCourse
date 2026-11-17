@@ -571,10 +571,31 @@ def create_app(settings=None) -> FastAPI:
     def todo_data(owner_id):
         synced = service.list_items(owner_id, {})
         completed_states = {"submitted", "graded", "completed", "passed"}
+        zone = ZoneInfo("Asia/Taipei")
+        now = datetime.now(zone)
+
+        def past_due(item) -> bool:
+            raw = item.get("due_at") or (item.get("closes_at") if item.get("kind") == "quiz" else None)
+            try:
+                if raw:
+                    moment = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                    return (moment if moment.tzinfo else moment.replace(tzinfo=zone)) < now
+                if item.get("due_date"):
+                    return date.fromisoformat(str(item["due_date"])) < now.date()
+            except ValueError:
+                pass
+            return False
+
         for item in synced:
             item["display_at"] = item.get("due_at") or (item.get("closes_at") if item.get("kind") == "quiz" else None) or item.get("due_date")
             item["submitted"] = item.get("remote_status") in completed_states
-            item["submission_state"] = "submitted" if item["submitted"] else ("unsubmitted" if item.get("remote_status") in {"not_submitted", "draft"} else "unknown")
+            if item["submitted"]:
+                item["submission_state"] = "submitted"
+            elif item.get("remote_status") in {"not_submitted", "draft"}:
+                # An unsubmitted item whose deadline has passed is overdue.
+                item["submission_state"] = "overdue" if past_due(item) else "unsubmitted"
+            else:
+                item["submission_state"] = "unknown"
         manual = [{**item, "manual": True, "handled": bool(item.get("handled_at")), "due_at": item.get("starts_at")} for item in service.list_manual_events(owner_id)]
         for item in manual: item["display_at"] = item.get("starts_at") or item.get("event_date")
         return {"items": synced + manual, "courses": service.list_courses(owner_id)}

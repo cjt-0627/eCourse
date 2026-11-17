@@ -27,7 +27,7 @@ EN = {
     "課程詳情": "Course details", "課務詳情": "Coursework details", "手動事件": "Manual event", "公告": "Announcement", "課務摘要": "Coursework digest",
     "語言": "Language", "繁體中文": "Traditional Chinese", "英文": "English", "介面語言會儲存在你的帳號中。": "The interface language is saved to your account.",
     "顯示模式": "Theme", "淺色": "Light", "深色": "Dark", "跟隨系統": "Use system setting",
-    "立即同步": "Sync now", "更新課程": "Refresh courses", "今天": "Today", "未來七天": "Next 7 days", "已逾期": "Overdue", "待確認": "Needs confirmation",
+    "立即同步": "Sync now", "更新課程": "Refresh courses", "今天": "Today", "未來七天": "Next 7 days", "已逾期": "Overdue", "待確認": "Needs confirmation", "待處理": "To do",
     "最近待辦": "Upcoming", "平台狀態": "Platform status", "最近公告": "Recent announcements", "未來七天沒有待辦。": "No to-dos in the next seven days.",
     "尚未連接平台。": "No platform connected.", "連接設定": "Connection settings", "尚無公告。": "No announcements.",
     "最近同步嘗試：": "Latest sync attempt: ", "最近完整成功：": "Latest complete success: ", "下次排程：": "Next scheduled: ",
