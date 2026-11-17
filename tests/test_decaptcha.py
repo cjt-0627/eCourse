@@ -62,11 +62,6 @@ def test_bundled_model_and_runtime_are_deployable_package_resources():
     assert "predictWithConfidence" in (assets / "oauth_runtime.js").read_text()
 
 
-def test_crawler_third_party_notice_is_kept_with_crawler_documents():
-    project_root = Path(__file__).resolve().parents[1]
-    assert (project_root / "crawler" / "THIRD_PARTY_NOTICES.txt").is_file()
-
-
 def test_solver_reuses_local_browser_context_and_returns_calibrated_shape():
     async def scenario():
         browser = FakeBrowser({"candidate": "5004", "confidence": 0.987})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import replace
 from datetime import datetime
@@ -13,6 +14,7 @@ from ecourse.parsing.dates import parse_nthu_date
 from ecourse.parsing.html import parse_course_content, parse_courses, parse_moodle_forum_pages
 
 from .base import AdapterStatus, CaptchaSolver, CourseItem, FetchResult, ItemDetail, SessionVerification
+from .elearn_http import ElearnHttp, NeedsBrowser, SessionExpired, UpstreamTimeout
 from .nthu_sso import NthuSsoMixin, SSO_HOST
 
 
@@ -27,6 +29,17 @@ class ElearnAdapter(NthuSsoMixin):
     courses_url = "https://elearn.nthu.edu.tw/my/courses.php"
     max_forum_containers = 8
     max_forum_pages = 5
+
+    def __init__(self, browser, captcha_solver=None, timeout_ms: int = 30_000, *, use_http: bool | None = None, http_transport=None) -> None:
+        super().__init__(browser, captcha_solver, timeout_ms)
+        self.use_http = os.environ.get("ECOURSE_ELEARN_HTTP", "1") != "0" if use_http is None else use_http
+        self.http_transport = http_transport
+
+    def _http(self, storage_state: dict[str, Any]) -> ElearnHttp | None:
+        if not self.use_http:
+            return None
+        session = ElearnHttp(storage_state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0))
+        return session if session.usable else None
 
     async def _verify_page(self, page: Page) -> SessionVerification:
         if urlparse(page.url).hostname != "elearn.nthu.edu.tw" or "/my/" not in urlparse(page.url).path:
@@ -131,6 +144,16 @@ class ElearnAdapter(NthuSsoMixin):
         return False
 
     async def discover_courses(self, storage_state: dict[str, Any]) -> FetchResult:
+        http = self._http(storage_state)
+        if http is not None:
+            try:
+                result = await self._discover_courses_http(http)
+            except NeedsBrowser:
+                result = None
+            finally:
+                await http.aclose()
+            if result is not None:
+                return result
         context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
@@ -199,6 +222,16 @@ class ElearnAdapter(NthuSsoMixin):
     async def fetch_course(self, storage_state: dict[str, Any], remote_course_id: str) -> FetchResult:
         if not remote_course_id.isdigit():
             return FetchResult((), (), False, ("invalid_remote_course_id",))
+        http = self._http(storage_state)
+        if http is not None:
+            try:
+                result = await self._fetch_course_http(http, remote_course_id)
+            except NeedsBrowser:
+                result = None
+            finally:
+                await http.aclose()
+            if result is not None:
+                return result
         context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
@@ -339,6 +372,16 @@ class ElearnAdapter(NthuSsoMixin):
         allowed_paths = ("/mod/assign/", "/mod/quiz/", "/mod/forum/", "/mod/resource/", "/mod/page/", "/mod/url/")
         if parsed_url.scheme != "https" or parsed_url.hostname != "elearn.nthu.edu.tw" or not any(path in parsed_url.path for path in allowed_paths):
             return FetchResult((), (), False, ("invalid_item_ref",))
+        http = self._http(storage_state)
+        if http is not None:
+            try:
+                result = await self._fetch_item_detail_http(http, item_ref)
+            except NeedsBrowser:
+                result = None
+            finally:
+                await http.aclose()
+            if result is not None:
+                return result
         context = await self._fetch_context(storage_state)
         page = await context.new_page()
         page.set_default_timeout(self.timeout_ms)
@@ -402,6 +445,186 @@ class ElearnAdapter(NthuSsoMixin):
             return FetchResult((), (), False, ("unexpected_redirect",))
         finally:
             await context.close()
+
+    # ------------------------------------------------------------------
+    # Plain-HTTP fast paths (F5 challenge solved via dukpy)
+    # ------------------------------------------------------------------
+
+    async def _discover_courses_http(self, http: ElearnHttp) -> FetchResult:
+        try:
+            html, final = await http.get_text(self.courses_url)
+        except SessionExpired:
+            return FetchResult((), (), False, ("session_expired",))
+        except UpstreamTimeout:
+            return FetchResult((), (), False, ("upstream_timeout",))
+        if "/my/" not in urlparse(final).path:
+            raise NeedsBrowser
+        courses = parse_courses(html, final, self.platform)
+        if not courses:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            if not soup.select_one("a[href*='/course/view.php?id=']"):
+                known = {"no courses", "you are not enrolled in any courses", "沒有課程", "無課程", "尚未選修任何課程"}
+                for node in soup.select("[data-region='empty-message'], [data-region='courses-view'] .alert-info, .block_myoverview .alert-info"):
+                    if " ".join(node.get_text().split()).casefold() in known:
+                        return FetchResult((), ("course_catalog",), True)
+                raise NeedsBrowser
+        return FetchResult(courses, ("course_catalog",), True)
+
+    async def _fetch_course_http(self, http: ElearnHttp, remote_course_id: str) -> FetchResult:
+        course_url = f"https://elearn.nthu.edu.tw/course/view.php?id={remote_course_id}"
+        try:
+            html, final = await http.get_text(course_url)
+        except SessionExpired:
+            return FetchResult((), (), False, ("session_expired",))
+        except UpstreamTimeout:
+            return FetchResult((), (), False, ("upstream_timeout",))
+        content = parse_course_content(html, final, self.platform, remote_course_id)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        course_root = soup.select_one(
+            "#page-course-view-topics, #page-course-view-weeks, "
+            "body[id^='page-course-view-'], #region-main, #page-content, "
+            "main[role='main'], .course-content, [data-region='course-content']"
+        )
+        if course_root is None and not content.items:
+            raise NeedsBrowser
+        warnings: list[str] = []
+        if course_root is None:
+            warnings.append("course_root_unrecognized")
+        items = {(item.kind, item.remote_id): item for item in content.items}
+        forum_links = soup.select("a[href*='/mod/forum/view.php']")
+        forum_urls: list[str] = []
+        for link in forum_links:
+            href = str(link.get("href") or "")
+            url = urljoin(final, href)
+            parsed = urlparse(url)
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname == "elearn.nthu.edu.tw"
+                and parsed.path == "/mod/forum/view.php"
+                and parse_qs(parsed.query).get("id", [None])[0]
+            ):
+                if url not in forum_urls:
+                    forum_urls.append(url)
+        forum_limit_exceeded = len(forum_urls) > self.max_forum_containers
+        complete = not forum_limit_exceeded and not warnings
+        if forum_limit_exceeded:
+            warnings.append("elearn_forum_container_limit")
+        forum_results = await asyncio.gather(
+            *(self._fetch_forum_http(http, forum_url, remote_course_id)
+              for forum_url in forum_urls[:self.max_forum_containers])
+        )
+        for forum_complete, forum_items, forum_warnings in forum_results:
+            complete = complete and forum_complete
+            warnings.extend(forum_warnings)
+            for item in forum_items:
+                items[(item.kind, item.remote_id)] = item
+        return FetchResult(
+            tuple(items.values()), ("assignments", "quizzes", "announcements", "materials"),
+            complete, tuple(dict.fromkeys(warnings)),
+        )
+
+    async def _fetch_item_detail_http(self, http: ElearnHttp, item_ref: CourseItem) -> FetchResult:
+        try:
+            html, final = await http.get_text(item_ref.url)
+        except SessionExpired:
+            return FetchResult((), (), False, ("session_expired",))
+        except UpstreamTimeout:
+            return FetchResult((), (), False, ("upstream_timeout",))
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        region = soup.select_one("#region-main")
+        if region is None:
+            raise NeedsBrowser
+        from ecourse.adapters.eeclass_http import html_to_text
+        body = html_to_text(region)
+        updated = item_ref
+        if item_ref.kind == "assignment":
+            due_text = _labeled_value(body, ("Due date", "截止日期", "截止時間", "到期"))
+            due = parse_nthu_date(due_text)
+            status, evidence = _submission_status(body)
+            grade_text = _grade_text(body)
+            grading_status = _labeled_value(body, ("Grading status", "評分狀態", "成績狀態"))
+            if status == "submitted" and grade_text:
+                status = "graded"
+            updated = replace(
+                updated, due_at=due.due_at, due_date=due.due_date,
+                date_precision=due.precision, source_date_text=due.source_text,
+                remote_status=status, remote_status_text=_labeled_value(body, ("Submission status", "繳交狀態", "提交狀態")),
+                status_evidence=evidence, grade_text=grade_text,
+                grading_status_text=grading_status,
+            )
+        elif item_ref.kind == "quiz":
+            close_text = _labeled_value(body, ("Closes", "測驗關閉", "結束時間", "關閉"))
+            closes = parse_nthu_date(close_text)
+            status, evidence = _quiz_status(body)
+            quiz_status_text = _quiz_attempt_status_text(body)
+            updated = replace(
+                updated, closes_at=closes.due_at, closes_date=closes.due_date,
+                closes_precision=closes.precision, closes_source_text=closes.source_text,
+                remote_status=status, remote_status_text=quiz_status_text,
+                status_evidence=evidence, grade_text=_grade_text(body),
+            )
+        content_text = None
+        published_at = None
+        if item_ref.kind == "announcement":
+            content_node = soup.select_one(
+                "[id^='post-content-'], .forumpost .post-content-container, "
+                ".forumpost [data-region='post-content'], .forumpost .content, .posting.fullpost"
+            )
+            if content_node:
+                content_text = html_to_text(content_node, keep_paragraph_breaks=True).strip() or None
+            time_node = soup.select_one("time[datetime]")
+            if time_node:
+                raw_time = time_node.get("datetime", "")
+                try:
+                    published_at = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+                except ValueError:
+                    published_at = None
+        detail = ItemDetail(updated, content_text, published_at)
+        complete = item_ref.kind != "announcement" or content_text is not None
+        return FetchResult((detail,), (f"{item_ref.kind}_detail",), complete, () if complete else ("parser_changed",))
+
+    async def _fetch_forum_http(
+        self, http: ElearnHttp, forum_url: str, course_id: str,
+    ) -> tuple[bool, tuple[CourseItem, ...], tuple[str, ...]]:
+        forum_id = parse_qs(urlparse(forum_url).query).get("id", [None])[0]
+        if not forum_id:
+            return False, (), ("elearn_forum_invalid_id",)
+        queue = [forum_url]
+        seen: set[str] = set()
+        items: dict[str, CourseItem] = {}
+        complete = True
+        warnings: list[str] = []
+        while queue and len(seen) < self.max_forum_pages:
+            url = queue.pop(0)
+            if url in seen:
+                continue
+            try:
+                html, final = await http.get_text(url)
+            except UpstreamTimeout:
+                complete = False
+                warnings.append("elearn_forum_upstream_timeout")
+                break
+            except SessionExpired:
+                return False, tuple(items.values()), ("session_expired",)
+            except NeedsBrowser:
+                complete = False
+                warnings.append("elearn_forum_needs_browser")
+                break
+            seen.add(url)
+            parsed = parse_course_content(html, final, self.platform, course_id)
+            for item in parsed.items:
+                if item.kind == "announcement":
+                    items[item.remote_id] = item
+            for next_url in parse_moodle_forum_pages(html, final, forum_id):
+                if next_url not in seen and next_url not in queue:
+                    queue.append(next_url)
+        if queue:
+            complete = False
+            warnings.append("elearn_forum_page_limit")
+        return complete, tuple(items.values()), tuple(warnings)
 
 
 def _is_truncated_title(title: str) -> bool:
