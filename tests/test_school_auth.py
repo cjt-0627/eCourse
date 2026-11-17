@@ -95,6 +95,9 @@ def test_existing_school_credential_authenticates_without_mutating_connections(b
         after = (connection.credential_id, connection.generation, connection.auth_state)
         assert after == before
         assert session.query(SchoolLoginExchange).count() == 0
+        # A sign-in by an install that predates eeclass auto-connect adds it once.
+        eeclass = session.query(PlatformConnection).filter_by(owner_id=owner.id, platform="eeclass").all()
+        assert len(eeclass) == 1 and eeclass[0].generation == 1
 
 
 def test_authenticated_settings_replaces_credentials_and_reconnects_both_platforms(backend):

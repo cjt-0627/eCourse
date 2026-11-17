@@ -161,6 +161,18 @@ def revoke_session(db: Database, session_id, owner_id) -> bool:
         return True
 
 
+def ensure_eeclass_connection(settings, owner_id: str, credential_id: str) -> None:
+    """Connect eeclass with an already verified credential when it is missing."""
+    from ecourse.services import Service
+
+    with Database(settings).session() as session:
+        exists = session.scalar(select(PlatformConnection.id).where(
+            PlatformConnection.owner_id == owner_id, PlatformConnection.platform == "eeclass",
+        )) is not None
+    if not exists:
+        Service(settings).connect(owner_id, "eeclass", credential_id)
+
+
 def begin_school_auth(settings, account: str, password: str, *, platform: str = "elearn", device_label: str | None = None) -> dict:
     """Start school verification without issuing an application session."""
     from ecourse.services import Service
@@ -230,7 +242,7 @@ def authenticate_school_credential(settings, account: str, password: str) -> Own
     try:
         vault = Vault(settings.secret_dir)
         candidate_fingerprint = vault.account_fingerprint(account, owner_id=owner_id)
-        matched = False
+        matched, matched_id = False, None
         for record in records:
             saved = vault.unseal(
                 record.encrypted_payload, platform="elearn",
@@ -241,7 +253,15 @@ def authenticate_school_credential(settings, account: str, password: str) -> Own
             account_matches = hmac.compare_digest(saved_account.encode(), account.casefold().encode())
             password_matches = hmac.compare_digest(str(saved.get("password", "")).encode(), password.encode())
             saved.clear()
-            matched |= fingerprint_matches and account_matches and password_matches
+            if fingerprint_matches and account_matches and password_matches:
+                matched = True
+                matched_id = matched_id or record.id
+        if matched:
+            try:
+                # Installations that signed in before eeclass was auto-connected.
+                ensure_eeclass_connection(settings, owner_id, matched_id)
+            except Exception:
+                pass  # Never block a valid sign-in on a background connection.
         return owner if matched else None
     except (VaultError, UnicodeError):
         return None
@@ -333,14 +353,9 @@ def complete_school_auth(settings, exchange_token: str) -> tuple[str, AppSession
         session.flush()
         session.expunge(app_session)
         owner_id, credential_id = owner.id, credential.id
-        has_eeclass = session.scalar(select(PlatformConnection.id).where(
-            PlatformConnection.owner_id == owner_id, PlatformConnection.platform == "eeclass",
-        )) is not None
-    if not has_eeclass:
-        # The school login verified eLearn only; connect eeclass with the same
-        # credential so the first sync covers both platforms.
-        from ecourse.services import Service
-        Service(settings).connect(owner_id, "eeclass", credential_id)
+    # The school login verified eLearn only; connect eeclass with the same
+    # credential so the first sync covers both platforms.
+    ensure_eeclass_connection(settings, owner_id, credential_id)
     return raw_session, app_session
 
 

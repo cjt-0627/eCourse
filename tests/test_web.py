@@ -121,6 +121,8 @@ def test_dashboard_can_open_each_connected_platform_with_saved_session(web):
     client, _settings, db, owner = web
     login(client)
     with db.session() as session:
+        # Sign-in auto-connects eeclass; start from a clean connection set.
+        session.query(PlatformConnection).filter_by(owner_id=owner.id, platform="eeclass").delete()
         session.add_all([
             PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1),
             PlatformConnection(owner_id=owner.id, platform="eeclass", auth_state="connected", generation=1),
@@ -233,6 +235,7 @@ def test_selecting_one_cross_platform_course_source_disables_the_other(web):
     client, _settings, db, owner = web
     headers = login(client)
     with db.session() as session:
+        session.query(PlatformConnection).filter_by(owner_id=owner.id, platform="eeclass").delete()
         elearn = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
         eeclass = PlatformConnection(owner_id=owner.id, platform="eeclass", auth_state="connected", generation=1)
         group = CourseGroup(owner_id=owner.id, display_name="離散數學Discrete Mathematics_11510CS135601", course_code="11510CS135601")
@@ -349,7 +352,8 @@ def test_csrf_origin_cookie_headers_and_generic_errors(web):
     replacement = client.post("/api/v1/credentials", headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}, json={"account": "newest-account", "password": "new-school-secret"})
     assert replacement.status_code == 201
     connections = client.get("/settings/connections").text
-    assert connections.count('data-action="connect"') >= 2
+    # Sign-in already auto-connected eeclass, so at least eLearn remains.
+    assert connections.count('data-action="connect"') >= 1
     assert "ne***nt" in connections and "st***nt" not in connections
     assert "new-school-secret" not in connections and "school-secret" not in connections
     bad = client.post("/api/v1/manual-events", headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}, json={"title": ""})
