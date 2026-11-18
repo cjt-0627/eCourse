@@ -439,6 +439,8 @@ function filterTodos() {
   document.querySelectorAll(".todo").forEach(element => {
     const matches = element.dataset.search.toLocaleLowerCase().includes(query) && (!status?.value || (status.value === "open" ? OPEN_TODO_STATES.has(element.dataset.status) : element.dataset.status === status.value)) && (!course?.value || element.dataset.course === course.value);
     element.hidden = !matches;
+    // :first-of-type can't see the filter, so mark the first visible row ourselves.
+    element.classList.toggle("first-visible", matches && visible === 0);
     if (matches) visible += 1;
   });
   if (filterEmpty) filterEmpty.hidden = visible !== 0;
