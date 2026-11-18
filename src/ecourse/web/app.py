@@ -422,8 +422,6 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/api/v1/announcements/{item_id}")
     def announcement(item_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_announcement(user.id, item_id))
 
-    @app.put("/api/v1/announcements/{item_id}/read")
-    def read_announcement(item_id: str, request: Request, auth=Depends(require_write)): return _data(request, service.mark_announcement_read(auth[0].id, item_id))
 
     @app.post("/api/v1/manual-events")
     def create_event(body: ManualEventBody, request: Request, auth=Depends(require_write)): return _data(request, service.create_manual_event(auth[0].id, body.model_dump()), 201)

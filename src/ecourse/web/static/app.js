@@ -10,7 +10,7 @@ const englishMessages = {
   "目前沒有可同步的平台。": "There are no platforms available to sync.", "同步進行中；首次抓取所有課程可能需要幾分鐘…": "Syncing. The first full course fetch may take a few minutes…",
   "同步正在等待驗證碼，請到連接設定完成驗證。": "Sync is waiting for a verification code. Complete verification in Connection settings.", "前往連接設定": "Open Connection settings",
   "同步未完成，請查看系統狀態。": "Sync did not complete. Check System status.", "同步部分完成，部分資料未能更新。": "Sync partially completed; some data could not be updated.", "同步完成。": "Sync complete.",
-  "新增手動事件": "Add manual event", "編輯手動事件": "Edit manual event", "公告已標為已讀。": "Announcement marked as read.",
+  "新增手動事件": "Add manual event", "編輯手動事件": "Edit manual event",
   "帳密已更新，正在重新連接平台。": "Credentials updated. Reconnecting platforms.", "提醒設定已儲存。": "Reminder settings saved."
 };
 const tr = message => locale === "en" ? (englishMessages[message] || message) : message;
@@ -384,7 +384,6 @@ document.addEventListener("click", async event => {
       location.reload();
     } else if (action === "course-selection") { await api(`/api/v1/courses/${encodeURIComponent(button.dataset.course)}/selection`, {method: "PUT", body: JSON.stringify({source_id: button.dataset.source, selection_state: button.dataset.state, expected_version: Number(button.dataset.version)})}); location.assign(`/courses/${encodeURIComponent(button.dataset.course)}`); }
     else if (action === "read-notification") { await api(`/api/v1/notifications/${encodeURIComponent(button.dataset.id)}/read`, {method: "PUT", body: "{}"}); location.reload(); }
-    else if (action === "read-announcement") { await api(`/api/v1/announcements/${encodeURIComponent(button.dataset.id)}/read`, {method: "PUT", body: "{}"}); notice("公告已標為已讀。"); }
     else if (action === "delete-event" && confirm("確定刪除這個手動事件？")) { await api(`/api/v1/manual-events/${encodeURIComponent(button.dataset.id)}`, {method: "DELETE"}); location.reload(); }
     else if (action === "disconnect" && confirm(`確定解除 ${button.dataset.platform} 連接？`)) { await api(`/api/v1/connections/${button.dataset.platform}`, {method: "DELETE"}); location.reload(); }
   } catch (error) { notice(error.message, true); }

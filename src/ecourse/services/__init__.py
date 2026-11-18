@@ -624,14 +624,13 @@ class Service:
     def list_announcements(self, owner_id: str, **_filters) -> list[dict]:
         with self.db.session() as session:
             rows = session.execute(
-                select(m.Announcement, m.AnnouncementRead)
+                select(m.Announcement)
                 .join(m.CourseSource, m.CourseSource.id == m.Announcement.source_course_id)
                 .join(m.CourseSelection, m.CourseSelection.source_id == m.CourseSource.id)
-                .outerjoin(m.AnnouncementRead, and_(m.AnnouncementRead.announcement_id == m.Announcement.id, m.AnnouncementRead.owner_id == owner_id))
                 .where(m.Announcement.owner_id == owner_id, m.CourseSelection.selection_state == "selected")
                 .order_by(m.Announcement.published_at.desc().nullslast()).limit(100)
-            ).all()
-            return [{**_dict(a, exclude=("owner_id", "body_sanitized")), "read_at": _iso(r.read_at) if r else None} for a, r in rows]
+            ).scalars().all()
+            return [_dict(a, exclude=("owner_id", "body_sanitized")) for a in rows]
 
     def get_announcement(self, owner_id: str, announcement_id: str) -> dict:
         with self.db.session() as session:
@@ -639,18 +638,6 @@ class Service:
             if not announcement:
                 raise NotFoundError("找不到公告。")
             return _dict(announcement, exclude=("owner_id",))
-
-    def mark_announcement_read(self, owner_id: str, announcement_id: str) -> dict:
-        with self.db.session() as session:
-            announcement = session.scalar(select(m.Announcement).where(m.Announcement.id == announcement_id, m.Announcement.owner_id == owner_id))
-            if not announcement:
-                raise NotFoundError("找不到公告。")
-            read = session.scalar(select(m.AnnouncementRead).where(m.AnnouncementRead.owner_id == owner_id, m.AnnouncementRead.announcement_id == announcement_id))
-            if read is None:
-                read = m.AnnouncementRead(owner_id=owner_id, announcement_id=announcement_id)
-                session.add(read)
-            read.read_at, read.read_content_hash = self.clock(), announcement.content_hash
-            return {"id": announcement_id, "read_at": read.read_at.isoformat()}
 
     def create_manual_event(self, owner_id: str, payload: dict | None = None, **kwargs) -> dict:
         data = {**(payload or {}), **kwargs}
