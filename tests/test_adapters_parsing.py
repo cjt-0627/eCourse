@@ -352,3 +352,14 @@ def test_parse_eeclass_bulletin_date_infers_year():
     assert parse_eeclass_bulletin_date("公告日期 2026-10-06 18:30", now).hour == 18
     assert parse_eeclass_bulletin_date("沒有日期", now) is None
     assert parse_eeclass_bulletin_date("公告日期 02-30", now) is None
+
+
+def test_eeclass_empty_bulletin_page_does_not_turn_navigation_into_announcements():
+    from ecourse.parsing.html import parse_eeclass_activity_page
+
+    html = (
+        '<nav><a href="/course/bulletin/101">公告</a>'
+        '<a href="/course/bulletin/101?type=1">上架中</a><a href="/course/bulletin/101">已下架</a></nav>'
+        '<div id="fs-content">目前沒有公告</div>'
+    )
+    assert parse_eeclass_activity_page(html, "https://eeclass.nthu.edu.tw/course/bulletin/101", "101", "announcement") == ()

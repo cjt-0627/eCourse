@@ -511,6 +511,13 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/api/v1/sync/jobs/{job_id}")
     def sync_job(job_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_sync_job(user.id, job_id))
 
+    @app.get("/api/v1/initial-sync")
+    def initial_sync(request: Request, user=Depends(owner)): return _data(request, service.initial_sync_status(user.id))
+
+    @app.post("/api/v1/tutorial/complete")
+    def tutorial_complete(request: Request, auth=Depends(require_write)):
+        return _data(request, service.complete_tutorial(auth[0].id))
+
     @app.put("/api/v1/settings/language")
     def language(body: LanguageBody, request: Request, auth=Depends(require_write)):
         return _data(request, service.update_locale(auth[0].id, body.locale))
@@ -518,8 +525,9 @@ def create_app(settings=None) -> FastAPI:
     def render(template: str, *, title: str, active: str, data, auth) -> HTMLResponse:
         locale = normalize_locale(auth[0].locale)
         t = translator(locale)
+        first_run = service.initial_sync_status(auth[0].id)
         return HTMLResponse(templates.get_template(template).render(
-            title=t(title), active=active, data=data, user=auth[0],
+            title=t(title), active=active, data=data, user=auth[0], first_run=first_run,
             csrf_token=auth[1].csrf_token, locale=locale, t=t,
             course_name=lambda name, code=None: localized_course_name(name, locale, code),
         ))

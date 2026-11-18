@@ -157,7 +157,12 @@ def parse_eeclass_activity_page(html: str, base_url: str, course_id: str, kind: 
     if kind == "announcement":
         anchors = soup.select("a.fs-bulletin-item, .fs-bulletin-item a")
         if not anchors:
-            anchors = soup.select("a[href*='/course/bulletin/']")
+            # Only links to a specific bulletin count; the course navigation and the
+            # 上架中/已下架 tabs point at the list page itself and are not announcements.
+            anchors = [
+                anchor for anchor in soup.select("a[href*='/course/bulletin/']")
+                if urlparse(urljoin(base_url, str(anchor.get("href") or ""))).path.rstrip("/") != f"/course/bulletin/{course_id}"
+            ]
         for index, anchor in enumerate(anchors):
             title = " ".join(anchor.get_text(" ", strip=True).split())
             if not title:
