@@ -340,3 +340,15 @@ def test_eeclass_grading_state_implies_submitted() -> None:
 def test_eeclass_grade_label_does_not_match_weight_row() -> None:
     assert _eeclass_labeled_value("成績比重\n計算", ("成績",)) is None
     assert _eeclass_labeled_value("成績\n95", ("成績",)) == "95"
+
+
+def test_parse_eeclass_bulletin_date_infers_year():
+    from datetime import datetime, timezone
+    from ecourse.parsing.html import parse_eeclass_bulletin_date
+
+    now = datetime(2026, 11, 18, 4, 0, tzinfo=timezone.utc)
+    assert parse_eeclass_bulletin_date("人氣: 12, 公告日期 09-26, 課程", now).date().isoformat() == "2026-09-26"
+    assert parse_eeclass_bulletin_date("公告日期 12-30", now).date().isoformat() == "2025-12-30"
+    assert parse_eeclass_bulletin_date("公告日期 2026-10-06 18:30", now).hour == 18
+    assert parse_eeclass_bulletin_date("沒有日期", now) is None
+    assert parse_eeclass_bulletin_date("公告日期 02-30", now) is None

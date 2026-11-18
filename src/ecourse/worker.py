@@ -21,7 +21,7 @@ from ecourse.services import Service
 from ecourse.services.reminders import ReminderEngine
 from ecourse.vault import Vault
 from ecourse.ipc import IPCError, WorkerIPCServer, ipc_socket_path
-from ecourse.parsing.html import normalize_course_code
+from ecourse.parsing.html import normalize_course_code, parse_eeclass_bulletin_date
 from ecourse.platforms import managed_platform_url
 from ecourse.adapters.base import CourseItem
 
@@ -580,6 +580,9 @@ class Worker:
                         announcement.body_sanitized = detail["content_text"]
                     if detail.get("published_at"):
                         announcement.published_at = detail["published_at"]
+                    if announcement.published_at is None and announcement.body_sanitized:
+                        # eeclass only shows the date inside the body ("公告日期 MM-DD").
+                        announcement.published_at = parse_eeclass_bulletin_date(announcement.body_sanitized, self.clock())
                     if detail.get("content_text") or detail_pass:
                         # source_updated_at records the last detail check, including
                         # one that found no body, so empty ones back off instead of
