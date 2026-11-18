@@ -32,6 +32,7 @@ COURSE_SCAN_TIMEOUT_SECONDS = 45
 ITEM_DETAIL_TIMEOUT_SECONDS = 25
 ANNOUNCEMENT_DETAIL_TIMEOUT_SECONDS = 25
 JOB_TIMEOUT_SECONDS = 10 * 60
+MAX_CONCURRENT_JOBS = 2
 PLACEHOLDER_ANNOUNCEMENT_TITLES = frozenset({"公告", "Announcement"})
 
 # Opt-in phase timing (ECOURSE_TIMING=1) used to find where a sync spends its time.
@@ -163,10 +164,13 @@ class Worker:
             if response.get("attempt_id") in expired_ids:
                 self.challenge_requests.pop(request_key, None)
 
-    def claim_job(self, lease_seconds=90):
+    def claim_job(self, lease_seconds=90, exclude_connections=()):
         now, until = self.clock(), self.clock() + timedelta(seconds=lease_seconds)
         with self.db.session() as session:
-            candidate = session.scalar(select(m.SyncJob.id).where(m.SyncJob.state.in_(("queued", "running")), m.SyncJob.scheduled_at <= now, or_(m.SyncJob.lease_until.is_(None), m.SyncJob.lease_until < now)).order_by(m.SyncJob.scheduled_at).limit(1))
+            query = select(m.SyncJob.id).where(m.SyncJob.state.in_(("queued", "running")), m.SyncJob.scheduled_at <= now, or_(m.SyncJob.lease_until.is_(None), m.SyncJob.lease_until < now))
+            if exclude_connections:
+                query = query.where(m.SyncJob.connection_id.not_in(tuple(exclude_connections)))
+            candidate = session.scalar(query.order_by(m.SyncJob.scheduled_at).limit(1))
             if not candidate:
                 return None
             statement = update(m.SyncJob).where(m.SyncJob.id == candidate, or_(m.SyncJob.lease_until.is_(None), m.SyncJob.lease_until < now)).values(state="running", lease_owner=self.worker_id, lease_until=until, started_at=now, attempts=m.SyncJob.attempts + 1).returning(m.SyncJob)
@@ -1102,6 +1106,7 @@ class Worker:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise RuntimeError("已有 eCourse worker 正在執行。") from exc
+            running: dict[str, asyncio.Task] = {}
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             scheduler_task = asyncio.create_task(self._scheduler_loop())
             try:
@@ -1112,15 +1117,27 @@ class Worker:
                     with os.fdopen(fd, "w") as stream:
                         stream.write(secrets.token_urlsafe(32))
                 self.ipc_server = await WorkerIPCServer(ipc_socket_path(self.settings.runtime_dir), token_path.read_text().strip(), self.ipc_handler).start()
+                # One job per platform connection at a time, but different platforms
+                # run side by side: a slow first eLearn sync must not keep the much
+                # faster eeclass sync queued behind it.
                 while not self.stop_event.is_set():
-                    job = self.claim_job()
-                    if job:
-                        await self._process_claimed_job(job)
+                    for connection_id in [key for key, task in running.items() if task.done()]:
+                        task = running.pop(connection_id)
+                        if not task.cancelled() and task.exception() is not None:
+                            logging.error("sync job crashed", exc_info=task.exception())
+                    while len(running) < MAX_CONCURRENT_JOBS:
+                        job = self.claim_job(exclude_connections=tuple(running))
+                        if not job:
+                            break
+                        running[job.connection_id] = asyncio.create_task(self._process_claimed_job(job))
                     try:
                         await asyncio.wait_for(self.stop_event.wait(), timeout=poll_seconds)
                     except asyncio.TimeoutError:
                         pass
             finally:
+                for task in running.values():
+                    task.cancel()
+                await asyncio.gather(*running.values(), return_exceptions=True)
                 if self.ipc_server:
                     await self.ipc_server.close()
                 for task in self.challenge_tasks:
