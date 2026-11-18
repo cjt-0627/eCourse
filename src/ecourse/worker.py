@@ -350,9 +350,13 @@ class Worker:
             connection = session.get(m.PlatformConnection, job.connection_id) if job else None
             if not job or not connection or job.generation != connection.generation:
                 return
-            sources = session.scalars(select(m.CourseSource).join(m.CourseSelection, m.CourseSelection.source_id == m.CourseSource.id).where(m.CourseSource.connection_id == connection.id, m.CourseSelection.selection_state == "selected")).all()
-            source_refs = [(x.id, x.remote_course_id) for x in sources]
             fast_refresh = connection.last_success_at is not None
+            # The very first sync of a connection reads every course the user has not
+            # disabled, so both platforms are populated before they pick a source for
+            # courses that exist on both.  Later syncs only read the selected ones.
+            allowed = ("selected",) if fast_refresh else ("selected", "pending")
+            sources = session.scalars(select(m.CourseSource).join(m.CourseSelection, m.CourseSelection.source_id == m.CourseSource.id).where(m.CourseSource.connection_id == connection.id, m.CourseSelection.selection_state.in_(allowed))).all()
+            source_refs = [(x.id, x.remote_course_id) for x in sources]
 
         course_semaphore = asyncio.Semaphore(4)
 

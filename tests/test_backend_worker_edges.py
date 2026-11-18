@@ -967,3 +967,51 @@ def test_old_work_with_unread_status_is_retried_at_most_daily(backend):
     assert worker._needs_detail_refresh(item("unknown", 30)) is True       # never read, a day has passed
     assert worker._needs_detail_refresh(item("unknown", 2)) is False       # tried recently
     assert worker._needs_detail_refresh(item("not_submitted", 30)) is False  # old and settled
+
+
+def _fetched_remote_ids(settings, db, owner, *, first_sync):
+    service, public, job_data = _connection_job(settings, db, owner)
+    with db.session() as session:
+        connection = session.get(PlatformConnection, public["connection"]["id"])
+        if not first_sync:
+            connection.last_success_at = datetime.now(UTC)
+        for remote_id, state in (("1", "selected"), ("2", "pending"), ("3", "disabled")):
+            group = CourseGroup(owner_id=owner.id, display_name=f"課程{remote_id}", term="2026")
+            source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id=remote_id, title=f"課程{remote_id}")
+            session.add_all((group, source)); session.flush()
+            session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state=state))
+    claimed = Worker(settings, worker_id="claimer").claim_job()
+    fetched = []
+
+    class Adapter:
+        async def fetch_course(self, storage_state, remote_id):
+            fetched.append(remote_id)
+            return FetchResult((), (), True)
+
+    asyncio.run(Worker(settings, worker_id="claimer")._fetch_selected(claimed.id, Adapter(), {}))
+    return sorted(fetched)
+
+
+def test_first_sync_reads_pending_courses_but_later_syncs_only_selected(backend):
+    settings, db, owner = backend
+    assert _fetched_remote_ids(settings, db, owner, first_sync=True) == ["1", "2"]
+
+
+def test_later_sync_reads_only_selected_courses(backend):
+    settings, db, owner = backend
+    assert _fetched_remote_ids(settings, db, owner, first_sync=False) == ["1"]
+
+
+def test_initial_sync_status_and_tutorial_completion(backend):
+    settings, db, owner = backend
+    service = Service(settings)
+    assert service.initial_sync_status(owner.id)["done"] is True  # nothing connected yet
+    credential = service.save_credentials(owner.id, "account-a", "secret-a")
+    public = service.connect(owner.id, "elearn", credential["id"])
+    status = service.initial_sync_status(owner.id)
+    assert status["done"] is False and status["tutorial_completed"] is False
+    with db.session() as session:
+        session.scalars(select(SyncJob)).first().state = "succeeded"
+    assert service.initial_sync_status(owner.id)["done"] is True
+    assert service.complete_tutorial(owner.id) == {"tutorial_completed": True}
+    assert service.initial_sync_status(owner.id)["tutorial_completed"] is True

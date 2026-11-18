@@ -105,6 +105,38 @@ class Service:
             owner.locale = locale
         return {"locale": locale}
 
+    def complete_tutorial(self, owner_id: str) -> dict:
+        with self.db.session() as session:
+            owner = session.scalar(select(m.Owner).where(m.Owner.id == owner_id))
+            if owner is None:
+                raise NotFoundError("找不到使用者。")
+            if owner.tutorial_completed_at is None:
+                owner.tutorial_completed_at = self.clock()
+        return {"tutorial_completed": True}
+
+    def initial_sync_status(self, owner_id: str) -> dict:
+        """Whether every connected platform has finished its first fetch (success or not)."""
+        finished = {"succeeded", "partial", "failed", "cancelled"}
+        platforms = []
+        with self.db.session() as session:
+            owner = session.scalar(select(m.Owner).where(m.Owner.id == owner_id))
+            connections = session.scalars(select(m.PlatformConnection).where(
+                m.PlatformConnection.owner_id == owner_id, m.PlatformConnection.credential_id.is_not(None),
+            ).order_by(m.PlatformConnection.platform)).all()
+            for connection in connections:
+                job = session.scalar(select(m.SyncJob).where(
+                    m.SyncJob.connection_id == connection.id, m.SyncJob.generation == connection.generation,
+                ).order_by(m.SyncJob.scheduled_at.desc()).limit(1))
+                state = job.state if job else None
+                done = connection.last_success_at is not None or state in finished or connection.auth_state in {"not_connected", "credentials_invalid"}
+                platforms.append({"platform": connection.platform, "done": done, "state": state, "needs_attention": state == "waiting_user" or connection.auth_state == "challenge_required"})
+        return {
+            "done": all(item["done"] for item in platforms),
+            "needs_attention": any(item["needs_attention"] for item in platforms),
+            "platforms": platforms,
+            "tutorial_completed": bool(owner and owner.tutorial_completed_at),
+        }
+
     def save_credentials(self, owner_id: str, account: str, password: str, *, verified: bool = True) -> dict:
         account = account.strip()
         if not account or not password:

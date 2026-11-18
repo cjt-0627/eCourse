@@ -7,6 +7,7 @@
   <title>{{ title }} · eCourse</title>
   <script src="/static/theme.js"></script><link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/components.css">
+  <link rel="stylesheet" href="/static/onboarding.css">
 </head>
 <body data-csrf="{{ csrf_token }}" data-locale="{{ locale }}">
   <div class="shell">
@@ -18,7 +19,7 @@
         <a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a>
         <a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
       </nav>
-      <div class="account"><span>{{ user.login_name }}</span><button class="link" data-action="logout">{{ t('登出') }}</button></div>
+      <div class="account"><span>{{ user.login_name }}</span><button class="link" data-action="replay-tutorial">{{ t('使用教學') }}</button><button class="link" data-action="logout">{{ t('登出') }}</button></div>
     </aside>
     <main>
       <header><div><h1>{{ title }}</h1></div>{% block action %}{% endblock %}</header>
@@ -29,6 +30,8 @@
   <nav class="mobile-nav" aria-label="{{ t('手機導覽') }}">
     <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a><a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a><a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a><a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
   </nav>
+  {% include "_onboarding.html" %}
   <script src="/static/app.js" defer></script>
+  <script src="/static/onboarding.js" defer></script>
 </body>
 </html>
