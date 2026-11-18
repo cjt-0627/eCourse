@@ -31,7 +31,7 @@ button:disabled{opacity:.45;cursor:not-allowed}button.secondary,.button.secondar
 .shell>aside{border-right:1px solid var(--line);padding:2rem 1.15rem;background:var(--sidebar);}
 
 .brand{display:flex;align-items:center;gap:.65rem;font-size:1.2rem;font-weight:720;letter-spacing:-.045em;color:var(--ink);text-decoration:none}
-.brand span{display:grid;place-items:center;width:2rem;height:2rem;border-radius:10px;background:var(--green);color:var(--on-accent);box-shadow:none}
+.brand .mark{width:1.9rem;height:1.9rem;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.brand b{font-weight:650}
 nav{display:grid;gap:.4rem;margin-top:2.6rem}nav a{padding:.7rem .85rem;border:1px solid transparent;border-radius:11px;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:550;transition:background .16s,color .16s}
 nav a.active{background:var(--paper);border-color:var(--line);color:var(--ink);box-shadow:none}nav a:hover{background:var(--soft);color:var(--ink)}
 

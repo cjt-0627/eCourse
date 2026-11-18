@@ -37,7 +37,6 @@ EN = {
     '登入後第一次會把 eLearn 與 eeclass 的課程全部抓下來。同一門課兩邊都有時，請選擇要用哪個平台；之後只會更新你選的來源。': 'The first sync after sign-in loads every course from both eLearn and eeclass. When a course exists on both, choose which platform to use; afterwards only your chosen source is updated.',
     '平台異常時，到設定按「重試」': 'If a platform has problems, press Retry in Settings',
     '如果某個平台顯示無法使用或同步失敗，到「設定 → 連接設定」按「重試」就會重新登入並抓取。': 'If a platform shows as unavailable or a sync fails, go to Settings → Connection settings and press Retry to sign in and fetch again.',
-    '資料正在背景同步，你可以先看完教學。': 'Your data is syncing in the background. Take your time with the tutorial.',
     '正在抓取你的課程資料…': 'Loading your course data…',
     '第一次會同時讀取 eLearn 與 eeclass，需要一點時間。完成後會自動進入總覽。': 'The first run reads both eLearn and eeclass, which takes a moment. You will be taken to the overview automatically.',
     '需要輸入驗證碼才能繼續。': 'A verification code is needed to continue.',

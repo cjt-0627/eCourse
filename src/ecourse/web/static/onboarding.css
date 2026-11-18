@@ -8,7 +8,6 @@
 .tour-stage{display:grid;place-items:center;height:230px;border-radius:16px;background:var(--soft);border:1px solid var(--line);overflow:hidden;margin-top:1.4rem}
 .tour-foot{display:flex;align-items:center;justify-content:space-between;gap:1rem}
 .tour-dots{display:flex;gap:.4rem}.tour-dots i{width:.5rem;height:.5rem;border-radius:50%;background:var(--line);transition:background .2s,width .2s}.tour-dots i.on{background:var(--green);width:1.4rem;border-radius:1rem}
-.tour-hint{margin:.9rem 0 0;text-align:center}
 .tour-loading{text-align:center;padding:2.4rem 1.6rem}.tour-loading h2{margin:1.2rem 0 .5rem}
 .spinner{width:2.6rem;height:2.6rem;margin:0 auto;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:tour-spin .9s linear infinite}
 @keyframes tour-spin{to{transform:rotate(360deg)}}
