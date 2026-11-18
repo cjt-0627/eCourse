@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="settings-tabs"><a href="/settings/connections">{{ t('連接') }}</a><a href="/settings/reminders">{{ t('提醒') }}</a><a class="active" href="/settings/appearance">{{ t('外觀') }}</a><a href="/status">{{ t('系統狀態') }}</a></div>
+<div class="settings-tabs"><a href="/settings/connections">{{ t('連接') }}</a><a class="active" href="/settings/appearance">{{ t('外觀') }}</a><a href="/status">{{ t('系統狀態') }}</a></div>
 <section class="panel appearance-panel">
   <fieldset class="theme-options"><legend>{{ t('顯示模式') }}</legend>
     <label class="theme-choice"><input type="radio" name="appearance" value="light"><span class="theme-preview preview-light" aria-hidden="true"><span class="preview-sidebar"></span><span class="preview-content"><i></i><i></i><i></i></span></span><span class="theme-label">{{ t('淺色') }}</span></label>

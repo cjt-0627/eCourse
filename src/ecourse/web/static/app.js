@@ -11,7 +11,7 @@ const englishMessages = {
   "同步正在等待驗證碼，請到連接設定完成驗證。": "Sync is waiting for a verification code. Complete verification in Connection settings.", "前往連接設定": "Open Connection settings",
   "同步未完成，請查看系統狀態。": "Sync did not complete. Check System status.", "同步部分完成，部分資料未能更新。": "Sync partially completed; some data could not be updated.", "同步完成。": "Sync complete.",
   "新增手動事件": "Add manual event", "編輯手動事件": "Edit manual event",
-  "帳密已更新，正在重新連接平台。": "Credentials updated. Reconnecting platforms.", "提醒設定已儲存。": "Reminder settings saved."
+  "帳密已更新，正在重新連接平台。": "Credentials updated. Reconnecting platforms."
 };
 const tr = message => locale === "en" ? (englishMessages[message] || message) : message;
 const pendingWrites = new Set();
@@ -383,7 +383,6 @@ document.addEventListener("click", async event => {
       }
       location.reload();
     } else if (action === "course-selection") { await api(`/api/v1/courses/${encodeURIComponent(button.dataset.course)}/selection`, {method: "PUT", body: JSON.stringify({source_id: button.dataset.source, selection_state: button.dataset.state, expected_version: Number(button.dataset.version)})}); location.assign(`/courses/${encodeURIComponent(button.dataset.course)}`); }
-    else if (action === "read-notification") { await api(`/api/v1/notifications/${encodeURIComponent(button.dataset.id)}/read`, {method: "PUT", body: "{}"}); location.reload(); }
     else if (action === "delete-event" && confirm("確定刪除這個手動事件？")) { await api(`/api/v1/manual-events/${encodeURIComponent(button.dataset.id)}`, {method: "DELETE"}); location.reload(); }
     else if (action === "disconnect" && confirm(`確定解除 ${button.dataset.platform} 連接？`)) { await api(`/api/v1/connections/${button.dataset.platform}`, {method: "DELETE"}); location.reload(); }
   } catch (error) { notice(error.message, true); }
@@ -415,17 +414,6 @@ eventForm?.addEventListener("submit", event => {
       await api(id ? `/api/v1/manual-events/${encodeURIComponent(id)}` : "/api/v1/manual-events", {method: id ? "PATCH" : "POST", body: JSON.stringify(body)});
       location.reload();
     } catch (error) { notice(error.message, true); }
-  });
-});
-
-const reminder = document.querySelector("#reminder-form");
-reminder?.addEventListener("submit", event => {
-  event.preventDefault();
-  withForm(reminder, async () => {
-    const form = new FormData(reminder);
-    const body = {daily_enabled: form.has("daily_enabled"), daily_time: form.get("daily_time"), weekly_enabled: form.has("weekly_enabled"), weekly_day: 6, weekly_time: form.get("weekly_time"), quiet_start: form.get("quiet_start"), quiet_end: form.get("quiet_end"), lead_hours: String(form.get("lead_hours")).split(",").map(Number).filter(value => Number.isInteger(value) && value > 0)};
-    try { await api("/api/v1/settings/reminders", {method: "PUT", body: JSON.stringify(body)}); notice("提醒設定已儲存。"); }
-    catch (error) { notice(error.message, true); }
   });
 });
 

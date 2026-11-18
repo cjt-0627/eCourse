@@ -91,10 +91,9 @@ class Service:
         now = self.clock()
         with self.db.session() as session:
             item_count = session.scalar(select(func.count()).select_from(m.LearningItem).where(m.LearningItem.owner_id == owner_id, m.LearningItem.archived_at.is_(None))) or 0
-            unread = session.scalar(select(func.count()).select_from(m.Notification).where(m.Notification.owner_id == owner_id, m.Notification.read_at.is_(None))) or 0
             manual = session.scalar(select(func.count()).select_from(m.ManualEvent).where(m.ManualEvent.owner_id == owner_id)) or 0
             connections = session.scalars(select(m.PlatformConnection).where(m.PlatformConnection.owner_id == owner_id)).all()
-            return {"counts": {"items": item_count, "manual_events": manual, "unread_notifications": unread}, "connections": [self._connection_with_sync(session, c) for c in connections], "generated_at": now.isoformat()}
+            return {"counts": {"items": item_count, "manual_events": manual}, "connections": [self._connection_with_sync(session, c) for c in connections], "generated_at": now.isoformat()}
 
     def update_locale(self, owner_id: str, locale: str) -> dict:
         if locale not in {"zh-Hant", "en"}:
@@ -150,7 +149,6 @@ class Service:
     @staticmethod
     def _clear_remote_namespace(session, owner_id: str, connection: m.PlatformConnection) -> None:
         old_item_ids = select(m.LearningItem.id).join(m.CourseSource).where(m.CourseSource.connection_id == connection.id)
-        session.execute(update(m.NotificationEvent).where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.entity_id.in_(old_item_ids), m.NotificationEvent.state == "pending").values(state="cancelled"))
         session.execute(m.CourseSource.__table__.delete().where(m.CourseSource.connection_id == connection.id))
         session.execute(m.CourseGroup.__table__.delete().where(m.CourseGroup.owner_id == owner_id, ~m.CourseGroup.id.in_(select(m.CourseSelection.group_id))))
         connection.remote_account_id = None
@@ -615,8 +613,6 @@ class Service:
                 session.add(pref)
             if handled is not None:
                 pref.handled_at = self.clock() if handled else None
-                if handled:
-                    session.execute(m.NotificationEvent.__table__.update().where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.entity_id == item_id, m.NotificationEvent.state == "pending").values(state="cancelled"))
             pref.muted_until = _dt(muted_until)
             session.flush()
             return self._item(item, pref)
@@ -674,8 +670,6 @@ class Service:
             values = self._manual_values(owner_id, current)
             old_deadline = (event.date_precision, event.starts_at, event.event_date, event.source_timezone)
             new_deadline = (values["date_precision"], values["starts_at"], values["event_date"], values["source_timezone"])
-            if new_deadline != old_deadline:
-                session.execute(m.NotificationEvent.__table__.update().where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.entity_id == event_id, m.NotificationEvent.state == "pending").values(state="cancelled"))
             for key, value in values.items():
                 setattr(event, key, value)
             if new_deadline != old_deadline:
@@ -689,20 +683,6 @@ class Service:
             if not event:
                 raise NotFoundError("找不到手動事件。")
             event.handled_at = self.clock() if handled else None
-            if handled:
-                session.execute(update(m.NotificationEvent).where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.entity_id == event_id, m.NotificationEvent.state == "pending").values(state="cancelled"))
-            else:
-                # Handling is personal state, not a deadline revision. Restore only
-                # unsent reminders from this exact deadline version. Processed events
-                # remain deduped and are never emitted a second time.
-                session.execute(update(m.NotificationEvent).where(
-                    m.NotificationEvent.owner_id == owner_id,
-                    m.NotificationEvent.entity_id == event_id,
-                    m.NotificationEvent.entity_revision == event.revision,
-                    m.NotificationEvent.type == "manual_event_due",
-                    m.NotificationEvent.state == "cancelled",
-                    or_(m.NotificationEvent.expires_at.is_(None), m.NotificationEvent.expires_at > self.clock()),
-                ).values(state="pending"))
             return _dict(event, exclude=("owner_id",))
 
     def delete_manual_event(self, owner_id: str, event_id: str) -> dict:
@@ -710,7 +690,6 @@ class Service:
             event = session.scalar(select(m.ManualEvent).where(m.ManualEvent.id == event_id, m.ManualEvent.owner_id == owner_id))
             if not event:
                 raise NotFoundError("找不到手動事件。")
-            session.execute(m.NotificationEvent.__table__.update().where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.entity_id == event_id, m.NotificationEvent.state == "pending").values(state="cancelled"))
             session.delete(event)
             return {"id": event_id, "deleted": True}
 
@@ -759,95 +738,6 @@ class Service:
     @staticmethod
     def _job(job, platform=None):
         return {**_dict(job, exclude=("owner_id", "connection_id")), "platform": platform, "coverage": json.loads(job.coverage or "{}")}
-
-    def create_notification(self, owner_id: str, *, dedupe_key: str, type: str, title: str, body: str, internal_path="/notifications", entity_id=None, entity_revision=None, scheduled_at=None, expires_at=None) -> dict:
-        with self.db.session() as session:
-            existing = session.scalar(select(m.NotificationEvent).where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.dedupe_key == dedupe_key))
-            if existing:
-                notification = session.scalar(select(m.Notification).where(m.Notification.owner_id == owner_id, m.Notification.event_id == existing.id))
-                return _dict(notification, exclude=("owner_id",))
-            event = m.NotificationEvent(owner_id=owner_id, dedupe_key=dedupe_key, type=type, entity_id=entity_id, entity_revision=entity_revision, scheduled_at=scheduled_at or self.clock(), expires_at=expires_at)
-            session.add(event); session.flush()
-            notification = m.Notification(owner_id=owner_id, event_id=event.id, title=title, body=body, internal_path=internal_path)
-            session.add(notification); session.flush()
-            return _dict(notification, exclude=("owner_id",))
-
-    def list_notifications(self, owner_id: str, *, unread_only=False, limit=50) -> list[dict]:
-        with self.db.session() as session:
-            query = select(m.Notification).where(m.Notification.owner_id == owner_id)
-            if unread_only:
-                query = query.where(m.Notification.read_at.is_(None))
-            return [_dict(x, exclude=("owner_id",)) for x in session.scalars(query.order_by(m.Notification.created_at.desc()).limit(min(limit, 100))).all()]
-
-    def get_digest(self, owner_id: str, digest_id: str) -> dict:
-        with self.db.session() as session:
-            digest = session.scalar(select(m.DigestSnapshot).where(m.DigestSnapshot.id == digest_id, m.DigestSnapshot.owner_id == owner_id))
-            if not digest:
-                raise NotFoundError("找不到摘要。")
-            content = json.loads(digest.content)
-            entries = []
-            for entry in content.get("entries", []):
-                value = dict(entry)
-                value["internal_path"] = f"/todos?{'manual' if value.get('manual') else 'item'}={value['id']}"
-                entries.append(value)
-            return {
-                "id": digest.id,
-                "type": digest.type,
-                "period_start": digest.period_start.isoformat(),
-                "period_end": digest.period_end.isoformat(),
-                "generated_at": digest.generated_at.isoformat(),
-                "entries": entries,
-                "count": content.get("count", len(entries)),
-                "freshness_summary": json.loads(digest.freshness_summary or "{}"),
-            }
-
-    def mark_notification_read(self, owner_id: str, notification_id: str) -> dict:
-        with self.db.session() as session:
-            notification = session.scalar(select(m.Notification).where(m.Notification.id == notification_id, m.Notification.owner_id == owner_id))
-            if not notification:
-                raise NotFoundError("找不到通知。")
-            notification.read_at = notification.read_at or self.clock()
-            return _dict(notification, exclude=("owner_id",))
-
-    def get_reminder_settings(self, owner_id: str) -> list[dict]:
-        with self.db.session() as session:
-            rows = session.scalars(select(m.ReminderRule).where(m.ReminderRule.owner_id == owner_id).order_by(m.ReminderRule.kind)).all()
-            return [{**_dict(x, exclude=("owner_id",)), "offsets": json.loads(x.offsets)} for x in rows]
-
-    def update_reminder_settings(self, owner_id: str, rules: list[dict] | dict) -> list[dict]:
-        if isinstance(rules, dict):
-            rules = rules.get("rules", [rules] if rules.get("kind") else [])
-        allowed = {"deadline", "exam", "daily", "weekly", "connection"}
-        with self.db.session() as session:
-            for data in rules:
-                if data.get("kind") not in allowed:
-                    raise ValidationError("提醒類型無效。")
-                if "local_time" in data and data["local_time"] is not None:
-                    try:
-                        hour, minute = map(int, data["local_time"].split(":"))
-                        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                            raise ValueError()
-                    except (ValueError, AttributeError):
-                        raise ValidationError("提醒時間格式無效。") from None
-                if "weekday" in data and data["weekday"] is not None and not 0 <= int(data["weekday"]) <= 6:
-                    raise ValidationError("星期設定無效。")
-                if "offsets" in data:
-                    if not isinstance(data["offsets"], list) or any(not isinstance(x, int) or x <= 0 or x > 24 * 30 for x in data["offsets"]):
-                        raise ValidationError("提前提醒時數無效。")
-                rule = session.scalar(select(m.ReminderRule).where(m.ReminderRule.owner_id == owner_id, m.ReminderRule.kind == data["kind"]))
-                if rule is None:
-                    rule = m.ReminderRule(owner_id=owner_id, kind=data["kind"]); session.add(rule)
-                for field in ("enabled", "local_time", "weekday", "quiet_start", "quiet_end", "privacy_mode"):
-                    if field in data:
-                        setattr(rule, field, data[field])
-                if "offsets" in data:
-                    rule.offsets = json.dumps(data["offsets"])
-            # Settings are configuration, not history. Rebuild only unsent outbox
-            # rows; delivered notifications and their dedupe evidence remain intact.
-            pending = session.scalars(select(m.NotificationEvent).where(m.NotificationEvent.owner_id == owner_id, m.NotificationEvent.state == "pending", m.NotificationEvent.type.in_(("item_due", "manual_event_due", "daily_digest", "weekly_digest")))).all()
-            for event in pending:
-                session.delete(event)
-        return self.get_reminder_settings(owner_id)
 
     def system_status(self, owner_id: str) -> dict:
         now = self.clock()

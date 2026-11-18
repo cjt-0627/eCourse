@@ -853,7 +853,6 @@ def test_manual_sync_only_scheduler_skips_periodic_enqueue(backend, monkeypatch)
     settings, _db, _owner = backend
     worker = Worker(settings, worker_id="acceptance", periodic_sync=False)
     calls = []
-    monkeypatch.setattr(worker.reminders, "tick", lambda: calls.append("reminders"))
     monkeypatch.setattr(worker, "schedule_periodic_sync", lambda: calls.append("periodic"))
 
     async def expire():
@@ -861,7 +860,7 @@ def test_manual_sync_only_scheduler_skips_periodic_enqueue(backend, monkeypatch)
 
     monkeypatch.setattr(worker, "expire_challenges", expire)
     asyncio.run(worker.scheduler_tick())
-    assert calls == ["reminders", "expiry"]
+    assert calls == ["expiry"]
 
 
 def test_valid_restored_session_updates_public_connection_and_attempt(backend):

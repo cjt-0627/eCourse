@@ -16,7 +16,6 @@
         <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a>
         <a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a>
         <a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a>
-        <a class="{{ 'active' if active == 'notifications' }}" href="/notifications">{{ t('通知') }}</a>
         <a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
       </nav>
       <div class="account"><span>{{ user.login_name }}</span><button class="link" data-action="logout">{{ t('登出') }}</button></div>
@@ -28,7 +27,7 @@
     </main>
   </div>
   <nav class="mobile-nav" aria-label="{{ t('手機導覽') }}">
-    <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a><a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a><a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a><a class="{{ 'active' if active == 'notifications' }}" href="/notifications">{{ t('通知') }}</a><a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
+    <a class="{{ 'active' if active == 'dashboard' }}" href="/">{{ t('總覽') }}</a><a class="{{ 'active' if active == 'todos' }}" href="/todos">{{ t('待辦') }}</a><a class="{{ 'active' if active == 'courses' }}" href="/courses">{{ t('課程') }}</a><a class="{{ 'active' if active == 'settings' }}" href="/settings/connections">{{ t('設定') }}</a>
   </nav>
   <script src="/static/app.js" defer></script>
 </body>

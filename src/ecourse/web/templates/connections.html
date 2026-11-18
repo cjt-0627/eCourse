@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="settings-tabs"><a class="active" href="/settings/connections">{{ t('連接') }}</a><a href="/settings/reminders">{{ t('提醒') }}</a><a href="/settings/appearance">{{ t('外觀') }}</a><a href="/status">{{ t('系統狀態') }}</a></div>
+<div class="settings-tabs"><a class="active" href="/settings/connections">{{ t('連接') }}</a><a href="/settings/appearance">{{ t('外觀') }}</a><a href="/status">{{ t('系統狀態') }}</a></div>
 <section class="grid">
   <article class="panel"><h2>{{ t('校務帳密') }}</h2><p>{{ t('帳密加密儲存於本機。更新後會重新連接平台。') }}</p>{% if data.get('credential_hint') %}<p class="badge">{{ t('目前帳號：') }}{{ data.get('credential_hint') }}</p>{% endif %}<form id="credentials-form"><label>{{ t('校務帳號') }}<input name="account" autocomplete="username" required></label><label>{{ t('校務密碼') }}<input name="password" type="password" autocomplete="new-password" required></label><button type="submit">{{ t('更新並重新連接') }}</button></form></article>
   <article class="panel"><h2>{{ t('平台連接') }}</h2><p class="fine">{{ t('背景服務運作時，每小時檢查並同步；登入失效會使用本機加密保存的帳密自動重新登入。安装专用 Brave 扩充功能后，「使用已登入狀態開啟」会在目前视窗新增分页。校方要求額外驗證時，仍可能需要補填驗證碼。') }}</p>
