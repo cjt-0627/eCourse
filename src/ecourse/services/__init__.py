@@ -572,7 +572,10 @@ class Service:
                 query = query.where(m.PlatformConnection.platform == filters["platform"])
             if filters.get("q"):
                 query = query.where(or_(m.LearningItem.title.ilike(f"%{filters['q']}%"), m.CourseGroup.display_name.ilike(f"%{filters['q']}%")))
-            query = query.order_by(m.LearningItem.due_at.desc().nullslast(), m.LearningItem.due_date.desc().nullslast(), m.LearningItem.title).limit(min(int(filters.get("limit", 50)), 100))
+            limit = int(filters.get("limit", 50))
+            query = query.order_by(m.LearningItem.due_at.desc().nullslast(), m.LearningItem.due_date.desc().nullslast(), m.LearningItem.title)
+            if limit > 0:
+                query = query.limit(limit)
             return [self._item(item, pref, source, connection, group) for item, pref, source, connection, group in session.execute(query).all()]
 
     def get_item(self, owner_id: str, item_id: str) -> dict:

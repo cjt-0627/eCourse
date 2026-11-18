@@ -444,8 +444,8 @@ language?.querySelectorAll('[name="locale"]').forEach(input => input.addEventLis
 }));
 
 const search = document.querySelector("#todo-search"), status = document.querySelector("#todo-status"), course = document.querySelector("#todo-course"), filterEmpty = document.querySelector("#todo-filter-empty");
-// "待處理": everything that still needs action, i.e. all but submitted items.
-const OPEN_TODO_STATES = new Set(["overdue", "unsubmitted", "unknown", "manual"]);
+// "待處理": unsubmitted, unknown, or manually created — excludes overdue.
+const OPEN_TODO_STATES = new Set(["unknown", "manual", "unsubmitted"]);
 function filterTodos() {
   const query = (search?.value || "").trim().toLocaleLowerCase();
   let visible = 0;

@@ -569,7 +569,7 @@ def create_app(settings=None) -> FastAPI:
         return endpoint
 
     def todo_data(owner_id):
-        synced = service.list_items(owner_id, {})
+        synced = service.list_items(owner_id, {"limit": 0})
         completed_states = {"submitted", "graded", "completed", "passed"}
         zone = ZoneInfo("Asia/Taipei")
         now = datetime.now(zone)
