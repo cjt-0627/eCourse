@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from html.parser import HTMLParser
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -196,3 +198,29 @@ def parse_moodle_forum_pages(html: str, base_url: str, forum_id: str) -> tuple[s
         ):
             found[url] = None
     return tuple(found)
+
+
+_BULLETIN_DATE = re.compile(r"公告日期\s*(?:(\d{4})-)?(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?")
+
+
+def parse_eeclass_bulletin_date(text: str | None, now: datetime) -> datetime | None:
+    """Read "公告日期 [YYYY-]MM-DD [HH:MM]" from an eeclass bulletin body.
+
+    eeclass usually omits the year, so assume the most recent such date that is
+    not in the future (relative to ``now``).  Returns an aware Asia/Taipei time.
+    """
+    match = _BULLETIN_DATE.search(text or "")
+    if not match:
+        return None
+    year, month, day, hour, minute = match.groups()
+    zone = ZoneInfo("Asia/Taipei")
+    local_now = now.astimezone(zone)
+    try:
+        if year:
+            return datetime(int(year), int(month), int(day), int(hour or 0), int(minute or 0), tzinfo=zone)
+        value = datetime(local_now.year, int(month), int(day), int(hour or 0), int(minute or 0), tzinfo=zone)
+        if value > local_now + timedelta(days=1):
+            value = value.replace(year=local_now.year - 1)
+        return value
+    except ValueError:  # e.g. 02-29 in a non-leap year
+        return None

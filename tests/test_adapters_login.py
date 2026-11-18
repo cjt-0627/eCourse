@@ -357,6 +357,9 @@ class _IdentityPage:
             return _IdentityLocator((_IdentityNode(**{"data-userid": "999"}),))
         return _IdentityLocator()
 
+    async def wait_for_function(self, expression, *, timeout=None):
+        pass
+
     async def evaluate(self, expression):
         assert expression == "() => window.M && M.cfg ? {userid: M.cfg.userid, sesskey: M.cfg.sesskey} : null"
         if self.moodle_userid is None and self.sesskey is None:

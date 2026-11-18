@@ -77,10 +77,10 @@ def test_first_run_is_initialized_from_the_login_ui(tmp_path):
     assert (secrets / "master-v1.key").exists()
 
 
-def test_login_event_crud_reminders_and_logout(web):
+def test_login_event_crud_and_logout(web):
     client, _settings, _db, _owner = web
     headers = login(client)
-    for path in ("/", "/todos", "/courses", "/notifications", "/settings/connections", "/settings/reminders", "/status"):
+    for path in ("/", "/todos", "/courses", "/settings/connections", "/status"):
         assert client.get(path).status_code == 200
     created = client.post("/api/v1/manual-events", headers=headers, json={"title": "期中考", "kind": "exam", "date_precision": "exact", "starts_at": "2026-11-01T09:00:00+08:00"})
     assert created.status_code == 201
@@ -98,9 +98,6 @@ def test_login_event_crud_reminders_and_logout(web):
     edited = client.patch(f"/api/v1/manual-events/{event_id}", headers=headers, json={"title": "期中考（教室 101）"})
     assert edited.status_code == 200
     assert edited.json()["data"]["title"] == "期中考（教室 101）"
-    saved = client.put("/api/v1/settings/reminders", headers=headers, json={"daily_enabled": True, "daily_time": "07:30", "weekly_enabled": False, "weekly_time": "20:00", "quiet_start": "23:00", "quiet_end": "07:00", "lead_hours": [24, 3]})
-    assert saved.status_code == 200
-    assert {x["kind"] for x in saved.json()["data"]} == {"daily", "weekly", "deadline"}
     assert client.delete(f"/api/v1/manual-events/{event_id}", headers=headers).status_code == 200
     assert client.post("/api/v1/auth/logout", headers=headers, json={}).status_code == 200
     assert client.get("/api/v1/dashboard").status_code == 401

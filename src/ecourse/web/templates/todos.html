@@ -4,7 +4,7 @@
 <div class="toolbar">
   <label>{{ t('搜尋') }}<input id="todo-search" placeholder="{{ t('標題或課程') }}"></label>
   <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}">{{ course_name(course.get('display_name'), course.get('course_code')) }}</option>{% endfor %}</select></label>
-  <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="open" selected>{{ t('待處理') }}</option><option value="overdue">{{ t('已逾期') }}</option><option value="unsubmitted">{{ t('未繳交') }}</option><option value="unknown">{{ t('待確認') }}</option><option value="submitted">{{ t('已繳交') }}</option><option value="">{{ t('全部') }}</option></select></label>
+  <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="open" selected>{{ t('待處理') }}</option><option value="overdue">{{ t('已逾期') }}</option><option value="submitted">{{ t('已繳交') }}</option><option value="">{{ t('全部') }}</option></select></label>
 </div>
 <section class="panel" id="todo-list">
 {% for item in data.get('items',[]) %}

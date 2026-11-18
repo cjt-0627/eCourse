@@ -18,10 +18,9 @@ from sqlalchemy import func, or_, select, update
 from ecourse.db import Database
 from ecourse.db import models as m
 from ecourse.services import Service
-from ecourse.services.reminders import ReminderEngine
 from ecourse.vault import Vault
 from ecourse.ipc import IPCError, WorkerIPCServer, ipc_socket_path
-from ecourse.parsing.html import normalize_course_code
+from ecourse.parsing.html import normalize_course_code, parse_eeclass_bulletin_date
 from ecourse.platforms import managed_platform_url
 from ecourse.adapters.base import CourseItem
 
@@ -99,13 +98,11 @@ class Worker:
         self.periodic_sync = periodic_sync
         self.platform_opener = platform_opener
         self.job_timeout_seconds = job_timeout_seconds
-        self.reminders = ReminderEngine(settings, clock=self.clock)
         self.stop_event = asyncio.Event()
         self.challenges = {}
         self.challenge_requests = {}
         self.challenge_tasks = set()
         self.ipc_server = None
-        self._last_reminder_tick = None
 
     def heartbeat(self, active_job_count=0):
         with self.db.session() as session:
@@ -580,6 +577,9 @@ class Worker:
                         announcement.body_sanitized = detail["content_text"]
                     if detail.get("published_at"):
                         announcement.published_at = detail["published_at"]
+                    if announcement.published_at is None and announcement.body_sanitized:
+                        # eeclass only shows the date inside the body ("公告日期 MM-DD").
+                        announcement.published_at = parse_eeclass_bulletin_date(announcement.body_sanitized, self.clock())
                     if detail.get("content_text") or detail_pass:
                         # source_updated_at records the last detail check, including
                         # one that found no body, so empty ones back off instead of
@@ -1155,7 +1155,6 @@ class Worker:
             await asyncio.sleep(30)
 
     async def scheduler_tick(self):
-        self.reminders.tick()
         if self.periodic_sync:
             self.schedule_periodic_sync()
         await self.expire_challenges()

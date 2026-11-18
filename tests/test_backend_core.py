@@ -6,9 +6,8 @@ from sqlalchemy import select
 from ecourse.auth.service import initialize_owner
 from ecourse.config import Settings
 from ecourse.db import Database
-from ecourse.db.models import NotificationEvent, PlatformConnection, SyncJob
+from ecourse.db.models import PlatformConnection, SyncJob
 from ecourse.services import GoneError, NotFoundError, Service
-from ecourse.services.reminders import ReminderEngine
 from ecourse.vault import initialize_key
 from ecourse.worker import Worker
 
@@ -32,21 +31,15 @@ def test_migration_ready_and_utc_roundtrip(backend):
         assert loaded.created_at.tzinfo is UTC
 
 
-def test_manual_events_work_without_school_connection_and_cancel_reminder(backend):
+def test_manual_events_work_without_school_connection(backend):
     settings, db, owner = backend
     service = Service(settings)
     starts = datetime.now(UTC) + timedelta(days=3)
     event = service.create_manual_event(owner.id, {"title": "期中考", "kind": "exam", "date_precision": "exact", "starts_at": starts.isoformat()})
     assert service.get_manual_event(owner.id, event["id"])["starts_at"] == starts.isoformat()
-    ReminderEngine(settings).schedule_reminders(datetime.now(UTC))
-    with db.session() as session:
-        reminder = session.scalar(select(NotificationEvent).where(NotificationEvent.entity_id == event["id"]))
-        assert reminder.state == "pending"
     assert service.delete_manual_event(owner.id, event["id"])["deleted"]
     with pytest.raises(NotFoundError):
         service.get_manual_event(owner.id, event["id"])
-    with db.session() as session:
-        assert session.scalar(select(NotificationEvent).where(NotificationEvent.entity_id == event["id"])).state == "cancelled"
 
 
 def test_credentials_are_encrypted_and_generation_invalidates_old_work(backend):
@@ -72,17 +65,6 @@ def test_credentials_are_encrypted_and_generation_invalidates_old_work(backend):
     with pytest.raises(GoneError):
         service.get_login_attempt(owner.id, attempt["attempt_id"])
     assert service.worker_load_credentials(owner.id, replacement["id"])["password"] == "new-school-password"
-
-
-def test_notification_dedupe_and_owner_isolation(backend):
-    settings, _db, owner = backend
-    service = Service(settings)
-    first = service.create_notification(owner.id, dedupe_key="digest:one", type="daily", title="摘要", body="內容")
-    second = service.create_notification(owner.id, dedupe_key="digest:one", type="daily", title="另一個", body="不應建立")
-    assert first["id"] == second["id"]
-    assert len(service.list_notifications(owner.id)) == 1
-    with pytest.raises(NotFoundError):
-        service.mark_notification_read("00000000-0000-0000-0000-000000000000", first["id"])
 
 
 def test_atomic_claim_and_generation_guard(backend):

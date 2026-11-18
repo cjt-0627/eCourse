@@ -89,15 +89,6 @@ class ManualEventBody(BaseModel):
     event_date: str | None = None
 
 
-class ReminderBody(BaseModel):
-    daily_enabled: bool = True
-    daily_time: str = "08:00"
-    weekly_enabled: bool = True
-    weekly_day: int = Field(default=6, ge=0, le=6)
-    weekly_time: str = "20:00"
-    quiet_start: str = "23:00"
-    quiet_end: str = "07:00"
-    lead_hours: list[int] = [24, 3]
 
 
 class LanguageBody(BaseModel):
@@ -373,24 +364,11 @@ def create_app(settings=None) -> FastAPI:
             return _data(request, getattr(service, name)(user.id))
         return endpoint
 
-    def digest_data(owner_id, digest_id):
-        value = service.get_digest(owner_id, digest_id)
-        for entry in value.get("entries", []):
-            identifier = entry.get("id") or entry.get("item_id") or entry.get("event_id")
-            if identifier: entry["detail_path"] = f"/manual-events/{identifier}" if entry.get("manual") else f"/items/{identifier}"
-        return value
-
     app.add_api_route("/api/v1/dashboard", get_api("dashboard"), methods=["GET"])
     app.add_api_route("/api/v1/connections", get_api("list_connections"), methods=["GET"])
     app.add_api_route("/api/v1/courses", get_api("list_courses"), methods=["GET"])
     app.add_api_route("/api/v1/manual-events", get_api("list_manual_events"), methods=["GET"])
-    app.add_api_route("/api/v1/notifications", get_api("list_notifications"), methods=["GET"])
-    app.add_api_route("/api/v1/settings/reminders", get_api("get_reminder_settings"), methods=["GET"])
     app.add_api_route("/api/v1/system/status", get_api("system_status"), methods=["GET"])
-
-    @app.get("/api/v1/digests/{digest_id}")
-    def digest(digest_id: str, request: Request, user=Depends(owner)):
-        return _data(request, digest_data(user.id, digest_id))
 
     @app.get("/api/v1/courses/{item_id}")
     def course(item_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_course_workspace(user.id, item_id))
@@ -422,8 +400,6 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/api/v1/announcements/{item_id}")
     def announcement(item_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_announcement(user.id, item_id))
 
-    @app.put("/api/v1/announcements/{item_id}/read")
-    def read_announcement(item_id: str, request: Request, auth=Depends(require_write)): return _data(request, service.mark_announcement_read(auth[0].id, item_id))
 
     @app.post("/api/v1/manual-events")
     def create_event(body: ManualEventBody, request: Request, auth=Depends(require_write)): return _data(request, service.create_manual_event(auth[0].id, body.model_dump()), 201)
@@ -440,9 +416,6 @@ def create_app(settings=None) -> FastAPI:
     @app.put("/api/v1/manual-events/{event_id}/preference")
     def manual_preference(event_id: str, body: HandledBody, request: Request, auth=Depends(require_write)):
         return _data(request, service.set_manual_event_preference(auth[0].id, event_id, handled=body.handled))
-
-    @app.put("/api/v1/notifications/{notification_id}/read")
-    def read_notification(notification_id: str, request: Request, auth=Depends(require_write)): return _data(request, service.mark_notification_read(auth[0].id, notification_id))
 
     @app.post("/api/v1/credentials")
     def credentials(body: CredentialsBody, request: Request, auth=Depends(require_write)):
@@ -538,15 +511,6 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/api/v1/sync/jobs/{job_id}")
     def sync_job(job_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_sync_job(user.id, job_id))
 
-    @app.put("/api/v1/settings/reminders")
-    def reminders(body: ReminderBody, request: Request, auth=Depends(require_write)):
-        rules = [
-            {"kind": "daily", "enabled": body.daily_enabled, "local_time": body.daily_time, "quiet_start": body.quiet_start, "quiet_end": body.quiet_end},
-            {"kind": "weekly", "enabled": body.weekly_enabled, "weekday": body.weekly_day, "local_time": body.weekly_time, "quiet_start": body.quiet_start, "quiet_end": body.quiet_end},
-            {"kind": "deadline", "enabled": True, "offsets": body.lead_hours, "quiet_start": body.quiet_start, "quiet_end": body.quiet_end},
-        ]
-        return _data(request, service.update_reminder_settings(auth[0].id, {"rules": rules}))
-
     @app.put("/api/v1/settings/language")
     def language(body: LanguageBody, request: Request, auth=Depends(require_write)):
         return _data(request, service.update_locale(auth[0].id, body.locale))
@@ -569,7 +533,7 @@ def create_app(settings=None) -> FastAPI:
         return endpoint
 
     def todo_data(owner_id):
-        synced = service.list_items(owner_id, {})
+        synced = service.list_items(owner_id, {"limit": 0})
         completed_states = {"submitted", "graded", "completed", "passed"}
         zone = ZoneInfo("Asia/Taipei")
         now = datetime.now(zone)
@@ -631,11 +595,6 @@ def create_app(settings=None) -> FastAPI:
         value["announcements"] = service.list_announcements(owner_id)[:5]
         return value
 
-    def reminder_data(owner_id):
-        rows = {row["kind"]: row for row in service.get_reminder_settings(owner_id)}
-        daily, weekly, deadline = rows.get("daily", {}), rows.get("weekly", {}), rows.get("deadline", {})
-        return {"daily_enabled": daily.get("enabled", True), "daily_time": daily.get("local_time") or "08:00", "weekly_enabled": weekly.get("enabled", True), "weekly_time": weekly.get("local_time") or "20:00", "quiet_start": daily.get("quiet_start") or "23:00", "quiet_end": daily.get("quiet_end") or "07:00", "lead_hours": deadline.get("offsets") or [24, 3]}
-
     def connection_data(owner_id):
         existing = {row["platform"]: row for row in service.list_connections(owner_id)}
         credentials = service.list_credentials(owner_id)
@@ -666,9 +625,7 @@ def create_app(settings=None) -> FastAPI:
     app.add_api_route("/", page("dashboard.html", "總覽", "dashboard", dashboard_data), methods=["GET"])
     app.add_api_route("/todos", page("todos.html", "待辦", "todos", todo_data), methods=["GET"])
     app.add_api_route("/courses", page("courses.html", "課程", "courses", lambda oid: {"courses": service.list_courses(oid)}), methods=["GET"])
-    app.add_api_route("/notifications", page("notifications.html", "通知", "notifications", lambda oid: {"notifications": service.list_notifications(oid)}), methods=["GET"])
     app.add_api_route("/settings/connections", page("connections.html", "連接設定", "settings", connection_data), methods=["GET"])
-    app.add_api_route("/settings/reminders", page("reminders.html", "提醒設定", "settings", reminder_data), methods=["GET"])
     app.add_api_route("/settings/appearance", page("appearance.html", "外觀設定", "settings", lambda oid: {}), methods=["GET"])
     app.add_api_route("/status", page("status.html", "系統狀態", "settings", status_data), methods=["GET"])
     @app.get("/courses/{course_id}", response_class=HTMLResponse)
@@ -707,13 +664,6 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/announcements/{announcement_id}", response_class=HTMLResponse)
     def announcement_page(announcement_id: str, request: Request):
         return _detail_page(request, "公告", "dashboard", lambda oid: service.get_announcement(oid, announcement_id))
-
-    @app.get("/digests/{digest_id}", response_class=HTMLResponse)
-    def digest_page(digest_id: str, request: Request):
-        auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))
-        if auth is None: return RedirectResponse("/login", 303)
-        data = digest_data(auth[0].id, digest_id)
-        return render("digest.html", title="課務摘要", active="notifications", data=data, auth=auth)
 
     def _detail_page(request: Request, title: str, active: str, loader):
         auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))

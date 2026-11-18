@@ -44,6 +44,25 @@ class ElearnAdapter(NthuSsoMixin):
     async def _verify_page(self, page: Page) -> SessionVerification:
         if urlparse(page.url).hostname != "elearn.nthu.edu.tw" or "/my/" not in urlparse(page.url).path:
             await self._goto(page, self.protected_url)
+        # elearn sits behind F5 BIG-IP which may serve a JS challenge page on
+        # the same URL before redirecting to the real Moodle page.  The full
+        # Playwright browser solves the challenge automatically, but _goto
+        # returns at DOMContentLoaded — before the challenge JS has fired.
+        # Wait for a Moodle marker or a clear session-expired signal so we
+        # don't capture an incomplete cookie jar.
+        try:
+            await page.wait_for_function(
+                """() => {
+                    if (document.querySelector('body.notloggedin')) return true;
+                    if (document.querySelector("a[href*='/login/logout.php']")) return true;
+                    if (window.M && M.cfg && M.cfg.sesskey) return true;
+                    if (document.querySelector("a[href*='/auth/oauth2/login.php']")) return true;
+                    return false;
+                }""",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            pass
         if await _page_session_expired(page):
             return SessionVerification(AdapterStatus.SESSION_EXPIRED, error_code="session_expired")
         parsed = urlparse(page.url)

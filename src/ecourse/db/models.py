@@ -260,16 +260,6 @@ class ItemPreference(Base):
     muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class AnnouncementRead(Base):
-    __tablename__ = "announcement_reads"
-    __table_args__ = (UniqueConstraint("owner_id", "announcement_id"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    announcement_id: Mapped[str] = mapped_column(ForeignKey("announcements.id", ondelete="CASCADE"))
-    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    read_content_hash: Mapped[str | None] = mapped_column(String(128))
-
-
 class SyncJob(Base):
     __tablename__ = "sync_jobs"
     __table_args__ = (Index("ix_jobs_claim", "state", "scheduled_at", "lease_until"),)
@@ -323,100 +313,6 @@ class ItemChange(Base):
     new_value: Mapped[str | None] = mapped_column(Text)
     revision: Mapped[int] = mapped_column(Integer)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class ReminderRule(Base):
-    __tablename__ = "reminder_rules"
-    __table_args__ = (UniqueConstraint("owner_id", "kind"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(32))
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    offsets: Mapped[str] = mapped_column(Text, default="[]")
-    local_time: Mapped[str | None] = mapped_column(String(8))
-    weekday: Mapped[int | None] = mapped_column(Integer)
-    quiet_start: Mapped[str] = mapped_column(String(8), default="23:00")
-    quiet_end: Mapped[str] = mapped_column(String(8), default="07:00")
-    privacy_mode: Mapped[str] = mapped_column(String(32), default="counts")
-
-
-class DigestSnapshot(Base):
-    __tablename__ = "digest_snapshots"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    type: Mapped[str] = mapped_column(String(32))
-    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    content: Mapped[str] = mapped_column(Text)
-    freshness_summary: Mapped[str] = mapped_column(Text, default="{}")
-
-
-class NotificationEvent(Base):
-    __tablename__ = "notification_events"
-    __table_args__ = (UniqueConstraint("owner_id", "dedupe_key"), Index("ix_events_due", "state", "scheduled_at"))
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    dedupe_key: Mapped[str] = mapped_column(String(500))
-    type: Mapped[str] = mapped_column(String(64))
-    entity_id: Mapped[str | None] = mapped_column(String(36))
-    entity_revision: Mapped[int | None] = mapped_column(Integer)
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    state: Mapped[str] = mapped_column(String(24), default="pending")
-
-
-class Notification(Base):
-    __tablename__ = "notifications"
-    __table_args__ = (UniqueConstraint("owner_id", "event_id"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    event_id: Mapped[str] = mapped_column(ForeignKey("notification_events.id", ondelete="CASCADE"))
-    title: Mapped[str] = mapped_column(String(300))
-    body: Mapped[str] = mapped_column(Text)
-    internal_path: Mapped[str] = mapped_column(String(500), default="/notifications")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class PushSubscription(Base):
-    __tablename__ = "push_subscriptions"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    device_id: Mapped[str] = mapped_column(String(128))
-    encrypted_endpoint: Mapped[bytes] = mapped_column(LargeBinary)
-    endpoint_hash: Mapped[str] = mapped_column(String(128), unique=True)
-    encrypted_keys: Mapped[bytes] = mapped_column(LargeBinary)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class PushDelivery(Base):
-    __tablename__ = "push_deliveries"
-    __table_args__ = (UniqueConstraint("event_id", "subscription_id"), Index("ix_deliveries_due", "state", "next_attempt_at"))
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    event_id: Mapped[str] = mapped_column(ForeignKey("notification_events.id", ondelete="CASCADE"), index=True)
-    subscription_id: Mapped[str] = mapped_column(ForeignKey("push_subscriptions.id", ondelete="CASCADE"), index=True)
-    state: Mapped[str] = mapped_column(String(24), default="pending")
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    display_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_error_code: Mapped[str | None] = mapped_column(String(64))
-
-
-class NotificationDedupe(Base):
-    __tablename__ = "notification_dedupe"
-    __table_args__ = (UniqueConstraint("owner_id", "dedupe_key"),)
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
-    dedupe_key: Mapped[str] = mapped_column(String(500))
-    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    retain_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class WorkerHeartbeat(Base):
