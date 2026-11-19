@@ -455,7 +455,7 @@ document.querySelectorAll(".connection[data-attempt]").forEach(row => { const pl
 const targetParams = new URLSearchParams(location.search), targetId = targetParams.get("item") || targetParams.get("manual");
 if (targetId) { const target = document.querySelector(`[data-id="${CSS.escape(targetId)}"]`)?.closest(".todo"); if (target) { target.classList.add("targeted"); target.scrollIntoView({block: "center"}); } }
 
-// Pointer events support both touch and mouse without making course links draggable.
+// Pointer events support both touch and mouse without making course links natively draggable.
 const courseGrid = document.querySelector('[data-course-grid]');
 if (courseGrid) {
   const key = `ecourse.course-order.v1:${courseGrid.dataset.owner}`;
@@ -478,51 +478,71 @@ if (courseGrid) {
       status.textContent = locale === 'en' ? 'Order changed. Browser storage is unavailable; reloading will reset it.' : '排序已調整，但瀏覽器無法儲存，重新整理後會還原。';
     }
   };
-  let drag = null;
+  // Long-press (mouse or touch) lifts the whole card; short taps still open the course.
+  const HOLD_MS = 380, SLOP = 8;
+  let press = null, drag = null, suppressClick = false;
+  const clearPress = () => { if (press) { clearTimeout(press.timer); press.card.classList.remove('pressing'); press = null; } };
+  const follow = event => {
+    drag.card.style.transform = 'none';
+    const r = drag.card.getBoundingClientRect();
+    drag.card.style.transform = `translate(${event.clientX - drag.dx - r.left}px, ${event.clientY - drag.dy - r.top}px)`;
+  };
   courseGrid.addEventListener('keydown', event => {
-    const handle = event.target.closest('.course-drag');
-    if (!handle) return;
-    if (event.key === 'Escape' && drag) { finish(true); return; }
-    if (!['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home','End'].includes(event.key) || drag) return;
+    const link = event.target.closest('.course-tile-link');
+    if (!link || !event.altKey) return;
+    if (!['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home','End'].includes(event.key)) return;
     event.preventDefault();
-    const card = handle.closest('[data-course-id]');
+    const card = link.closest('[data-course-id]');
     const lane = card.closest('[data-course-lane]');
     const rows = [...lane.querySelectorAll('[data-course-id]')], index = rows.indexOf(card);
     const target = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : index + (['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1);
     if (target < 0 || target >= rows.length || target === index) return;
     lane.insertBefore(card, target > index ? rows[target].nextSibling : rows[target]);
-    handle.focus(); save(card);
+    link.focus(); save(card);
   });
   courseGrid.addEventListener('pointerdown', event => {
-    const handle = event.target.closest('.course-drag');
-    if (!handle || event.button !== 0 || drag) return;
-    event.preventDefault(); handle.focus();
-    const card = handle.closest('[data-course-id]');
-    drag = {card, handle, id: event.pointerId, lane:card.closest('[data-course-lane]'), original:[...card.closest('[data-course-lane]').querySelectorAll('[data-course-id]')], x:event.clientX, y:event.clientY, moved:false};
-    // Capture on the stable grid; moving a card must not interrupt the pointer stream.
-    courseGrid.setPointerCapture(event.pointerId);
+    const card = event.target.closest('[data-course-id]');
+    if (!card || event.button !== 0 || drag || press) return;
+    card.classList.add('pressing');
+    press = {card, id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
+      const p = press; press = null;
+      const r = p.card.getBoundingClientRect();
+      p.card.classList.remove('pressing'); p.card.classList.add('sorting');
+      drag = {card: p.card, id: p.id, lane: p.card.closest('[data-course-lane]'), original: [...p.card.closest('[data-course-lane]').querySelectorAll('[data-course-id]')], dx: p.x - r.left, dy: p.y - r.top, moved: false};
+      suppressClick = true;
+      try { courseGrid.setPointerCapture(p.id); } catch {}
+      navigator.vibrate?.(12);
+    }, HOLD_MS)};
   });
   courseGrid.addEventListener('pointermove', event => {
+    if (press && event.pointerId === press.id && Math.hypot(event.clientX - press.x, event.clientY - press.y) > SLOP) clearPress();
     if (!drag || event.pointerId !== drag.id) return;
-    if (!drag.moved && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<6) return;
-    drag.moved=true; drag.card.classList.add('sorting');
-    if(event.clientY > window.innerHeight - 65) window.scrollBy(0, 18);
-    if(event.clientY < 65) window.scrollBy(0, -18);
-    const target = document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-course-id]');
-    if (!target || target === drag.card || target.closest('[data-course-lane]') !== drag.lane) return;
-    const rows=[...drag.lane.querySelectorAll('[data-course-id]')];
-    drag.lane.insertBefore(drag.card, rows.indexOf(target)>rows.indexOf(drag.card) ? target.nextSibling : target);
+    drag.moved = true;
+    if (event.clientY > window.innerHeight - 65) window.scrollBy(0, 18);
+    if (event.clientY < 65) window.scrollBy(0, -18);
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-course-id]');
+    if (target && target !== drag.card && target.closest('[data-course-lane]') === drag.lane) {
+      const rows = [...drag.lane.querySelectorAll('[data-course-id]')];
+      drag.lane.insertBefore(drag.card, rows.indexOf(target) > rows.indexOf(drag.card) ? target.nextSibling : target);
+    }
+    follow(event);
   });
   function finish(cancel = false) {
+    clearPress();
     if (!drag) return;
     const current = drag; drag = null;
     if (cancel) current.original.forEach(card => current.lane.append(card));
-    current.card.classList.remove('sorting');
+    current.card.classList.remove('sorting'); current.card.style.transform = '';
     if (courseGrid.hasPointerCapture(current.id)) courseGrid.releasePointerCapture(current.id);
-    current.handle.focus({preventScroll:true});
     if (!cancel && current.moved) save(current.card);
+    setTimeout(() => { suppressClick = false; }, 60);
   }
   courseGrid.addEventListener('pointerup', () => finish());
   courseGrid.addEventListener('pointercancel', () => finish(true));
   courseGrid.addEventListener('lostpointercapture', () => finish(true));
+  // Block page scroll once a card is lifted; before that, scrolling cancels the press.
+  courseGrid.addEventListener('touchmove', event => { if (drag) event.preventDefault(); }, {passive: false});
+  courseGrid.addEventListener('contextmenu', event => { if (press || drag) event.preventDefault(); });
+  courseGrid.addEventListener('dragstart', event => event.preventDefault());
+  courseGrid.addEventListener('click', event => { if (suppressClick) { event.preventDefault(); event.stopPropagation(); } }, true);
 }
