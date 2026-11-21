@@ -16,6 +16,7 @@ from ecourse.parsing.html import parse_course_content, parse_courses, parse_mood
 from .base import AdapterStatus, CaptchaSolver, CourseItem, FetchResult, ItemDetail, SessionVerification
 from .elearn_http import ElearnHttp, NeedsBrowser, SessionExpired, UpstreamTimeout
 from .nthu_sso import NthuSsoMixin, SSO_HOST
+from .shared_context import SharedHttpPool
 
 
 class ElearnAdapter(NthuSsoMixin):
@@ -34,12 +35,19 @@ class ElearnAdapter(NthuSsoMixin):
         super().__init__(browser, captcha_solver, timeout_ms)
         self.use_http = os.environ.get("ECOURSE_ELEARN_HTTP", "1") != "0" if use_http is None else use_http
         self.http_transport = http_transport
+        self._http_pool = SharedHttpPool()
 
-    def _http(self, storage_state: dict[str, Any]) -> ElearnHttp | None:
+    def _http(self, storage_state: dict[str, Any]):
         if not self.use_http:
             return None
-        session = ElearnHttp(storage_state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0))
-        return session if session.usable else None
+        return self._http_pool.lease(
+            storage_state,
+            lambda state: ElearnHttp(state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0)),
+        )
+
+    async def close(self) -> None:
+        await self._http_pool.close()
+        await super().close()
 
     async def _verify_page(self, page: Page) -> SessionVerification:
         if urlparse(page.url).hostname != "elearn.nthu.edu.tw" or "/my/" not in urlparse(page.url).path:
@@ -201,35 +209,37 @@ class ElearnAdapter(NthuSsoMixin):
                     return FetchResult((), (), False, ("parser_changed",))
             if await _catalog_has_more(page):
                 return FetchResult(courses, ("course_catalog_page",), False, ("course_catalog_pagination_not_expanded",))
-            enriched_courses = []
-            for course in courses:
+            meta_semaphore = asyncio.Semaphore(4)
+
+            async def _enrich_meta(course):
                 if "[元課程]" not in course.title or not _is_truncated_title(course.title):
-                    enriched_courses.append(course)
-                    continue
-                detail_page = await context.new_page()
-                detail_page.set_default_timeout(self.timeout_ms)
-                try:
-                    await self._goto(detail_page, course.url)
-                    headings = detail_page.locator(
-                        "[data-region='page-context-header'] h1, .page-header-headings h1, "
-                        "#page-header h1, main h1"
-                    )
-                    candidates = [await headings.nth(index).inner_text() for index in range(await headings.count())]
-                    candidates.append(await detail_page.title())
-                    complete_title = next(
-                        (
-                            cleaned for candidate in candidates
-                            if (cleaned := _clean_elearn_meta_course_title(candidate))
-                            and not _is_truncated_title(cleaned)
-                        ),
-                        None,
-                    )
-                    enriched_courses.append(replace(course, title=complete_title) if complete_title else course)
-                except (PlaywrightError, ValueError):
-                    enriched_courses.append(course)
-                finally:
-                    await detail_page.close()
-            courses = tuple(enriched_courses)
+                    return course
+                async with meta_semaphore:
+                    detail_page = await context.new_page()
+                    detail_page.set_default_timeout(self.timeout_ms)
+                    try:
+                        await self._goto(detail_page, course.url)
+                        headings = detail_page.locator(
+                            "[data-region='page-context-header'] h1, .page-header-headings h1, "
+                            "#page-header h1, main h1"
+                        )
+                        candidates = [await headings.nth(index).inner_text() for index in range(await headings.count())]
+                        candidates.append(await detail_page.title())
+                        complete_title = next(
+                            (
+                                cleaned for candidate in candidates
+                                if (cleaned := _clean_elearn_meta_course_title(candidate))
+                                and not _is_truncated_title(cleaned)
+                            ),
+                            None,
+                        )
+                        return replace(course, title=complete_title) if complete_title else course
+                    except (PlaywrightError, ValueError):
+                        return course
+                    finally:
+                        await detail_page.close()
+
+            courses = tuple(await asyncio.gather(*(_enrich_meta(course) for course in courses)))
             return FetchResult(courses, ("course_catalog",), True)
         except PlaywrightTimeoutError:
             return FetchResult((), (), False, ("upstream_timeout",))

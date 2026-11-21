@@ -278,6 +278,7 @@ class SyncJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
     coverage: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[str | None] = mapped_column(Text)
 
 
 class SyncScope(Base):

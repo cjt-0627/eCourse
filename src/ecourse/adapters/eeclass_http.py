@@ -28,7 +28,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 # Upper bound on simultaneous requests to the school server from this process.
-MAX_CONCURRENT_REQUESTS = 6
+MAX_CONCURRENT_REQUESTS = 10
 PAGE_CACHE_SECONDS = 60.0
 
 
@@ -154,6 +154,7 @@ class EeclassHttp:
         self.fingerprint = fingerprint.hexdigest()[:16]
         self._client = httpx.AsyncClient(
             cookies=jar, transport=transport, timeout=timeout, follow_redirects=True,
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=10),
             headers={"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8", "Accept": "text/html,application/xhtml+xml"},
         )
 

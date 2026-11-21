@@ -259,8 +259,10 @@ async function watchSync(jobs) {
       return;
     }
     const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-    notice(`同步進行中（已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。`);
-    await delay(1500);
+    const percents = states.map(job => Number(job.progress?.percent ?? (["succeeded", "partial", "failed", "cancelled"].includes(job.state) ? 100 : 0)));
+    const avg = percents.length ? Math.round(percents.reduce((sum, n) => sum + n, 0) / percents.length) : 0;
+    notice(avg > 0 ? `同步進行中（${avg}% · 已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。` : `同步進行中（已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。`);
+    await delay(1000);
   }
 }
 
@@ -277,11 +279,57 @@ setup?.addEventListener("submit", event => {
     } catch (reason) { error.textContent = reason.message; }
   });
 });
-async function watchSchoolLogin() {
+const EXP_PROGRESS_K = 2.5;
+const EXP_PROGRESS_DENOM = Math.expm1(EXP_PROGRESS_K);
+// Normalized exponential ease-in: f(x) = (e^(k*x) - 1) / (e^k - 1), slower early and faster near 100%.
+function expProgress(rawPercent, done = false) {
+  if (done) return 100;
+  const x = Math.max(0, Math.min(1, Number(rawPercent || 0) / 100));
+  if (x <= 0) return 0;
+  if (x >= 1) return 100;
+  return Math.min(99, Math.max(1, Math.round((Math.expm1(EXP_PROGRESS_K * x) / EXP_PROGRESS_DENOM) * 100)));
+}
+
+function renderLoginProgress(box, rawPercent, label, done = false) {
+  let wrap = box.querySelector(".login-progress");
+  if (!wrap) {
+    box.replaceChildren();
+    wrap = document.createElement("div");
+    wrap.className = "login-progress";
+    const head = document.createElement("div");
+    head.className = "login-progress-head";
+    const text = document.createElement("span");
+    text.dataset.role = "label";
+    const pct = document.createElement("strong");
+    pct.dataset.role = "percent";
+    head.append(text, pct);
+    const bar = document.createElement("progress");
+    bar.className = "sync-progress";
+    bar.max = 100;
+    wrap.append(head, bar);
+    box.append(wrap);
+  }
+  const value = expProgress(rawPercent, done);
+  const textEl = wrap.querySelector('[data-role="label"]');
+  const pctEl = wrap.querySelector('[data-role="percent"]');
+  const barEl = wrap.querySelector("progress");
+  if (textEl) textEl.textContent = label;
+  if (pctEl) pctEl.textContent = `${value}%`;
+  if (barEl) {
+    barEl.value = value;
+    barEl.classList.toggle("is-done", done);
+  }
+}
+
+async function watchSchoolLogin(initialRaw = 10) {
   const box = document.querySelector("#login-challenge");
+  let raw = initialRaw;
+  let authTicks = 0;
+  if (box) renderLoginProgress(box, raw, "等待背景服務開始驗證…");
   while (box) {
     const state = await api("/api/v1/auth/school/status");
     if (state.state === "succeeded") {
+      renderLoginProgress(box, 100, "驗證成功，正在進入系統…", true);
       await api("/api/v1/auth/school/complete", {method: "POST", body: "{}"});
       location.href = "/courses";
       return;
@@ -308,17 +356,27 @@ async function watchSchoolLogin() {
         withForm(form, async () => {
           try {
             await api("/api/v1/auth/school/challenge-answer", {method: "POST", body: JSON.stringify({answer: input.value, request_id: crypto.randomUUID()})});
-            box.textContent = "正在驗證…";
-            await watchSchoolLogin();
+            renderLoginProgress(box, 68, "正在驗證送出的驗證碼…");
+            await watchSchoolLogin(68);
           } catch (error) { box.textContent = error.message; }
         });
       });
       box.append(hint, image, form);
       return;
     }
-    if (["failed", "credentials_invalid", "expired"].includes(state.state)) throw new Error("登入資料不正確或校方暫時無法驗證。");
-    box.textContent = "正在驗證校務帳號…";
-    await delay(1500);
+    if (["failed", "credentials_invalid", "expired"].includes(state.state)) {
+      box.replaceChildren();
+      throw new Error("登入資料不正確或校方暫時無法驗證。");
+    }
+    if (state.state === "authenticating") {
+      authTicks += 1;
+      raw = raw < 35 ? 35 : raw < 94 ? Math.min(94, raw + 6) : Math.min(98, raw + (98 - raw) * 0.25);
+      renderLoginProgress(box, raw, "正在連線校務系統並自動辨識驗證碼…");
+    } else {
+      raw = Math.min(28, raw + 4);
+      renderLoginProgress(box, raw, "等待背景服務開始驗證…");
+    }
+    await delay(500);
   }
 }
 login?.addEventListener("submit", event => {
