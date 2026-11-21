@@ -235,6 +235,7 @@ class Worker:
             self._finish(job.id, "failed", "adapter_unavailable")
             return
         try:
+            self._update_progress(job.id, "authenticating", 15)
             storage_state = self._load_session_state(connection.id, platform, owner_id)
             verified = _plain(await adapter.verify_session(storage_state)) if storage_state else {"status": "expired"}
             verify_status = str(verified.get("status"))
@@ -269,6 +270,7 @@ class Worker:
                 if not self.retry_delays and not self._reserve_single_login(connection.id, owner_id, job.generation):
                     self._finish(job.id, "failed", "session_expired")
                     return
+                self._mark_attempt_authenticating(connection.id, job.generation)
                 credentials = self.service.worker_load_credentials(owner_id, credential_id)
                 try:
                     login = _plain(await adapter.begin_login(credentials["account"], credentials["password"], storage_state=storage_state, connection_generation=job.generation))
@@ -293,6 +295,7 @@ class Worker:
                 if not self._save_session_state(connection.id, platform, owner_id, job.generation, storage_state, login.get("remote_account_id")):
                     self._finish(job.id, "failed", "identity_mismatch")
                     return
+            self._update_progress(job.id, "discovering", 25)
             _t = time.perf_counter()
             discovered = _plain(await adapter.discover_courses(storage_state))
             _timing("discover_courses", _t, platform=platform, courses=len(discovered.get("records", discovered.get("courses", discovered.get("data", [])))), complete=discovered.get("complete", True))
@@ -317,10 +320,43 @@ class Worker:
                             current_connection.last_success_at = self.clock()
                     else:
                         current.state, current.error_code, current.finished_at, current.lease_until = "partial", "partial_fetch", self.clock(), None
+                    existing_progress = json.loads(current.progress or "{}")
+                    existing_progress.update({"phase": "done", "percent": 100})
+                    current.progress = json.dumps(existing_progress, ensure_ascii=False)
         except Exception as exc:
             logging.exception("platform sync failed during adapter fetch")
             code = getattr(exc, "code", "upstream_unavailable")
             self._finish(job.id, "failed", code)
+
+    def _update_progress(
+        self, job_id, phase: str, percent: int, *,
+        courses_done: int = 0, courses_total: int = 0,
+        items_done: int = 0, items_total: int = 0,
+    ) -> None:
+        payload = json.dumps({
+            "phase": phase,
+            "percent": max(0, min(100, int(percent))),
+            "courses_done": int(courses_done),
+            "courses_total": int(courses_total),
+            "items_done": int(items_done),
+            "items_total": int(items_total),
+        }, ensure_ascii=False)
+        with self.db.session() as session:
+            session.execute(
+                update(m.SyncJob)
+                .where(m.SyncJob.id == job_id, m.SyncJob.lease_owner == self.worker_id)
+                .values(progress=payload)
+            )
+
+    def _mark_attempt_authenticating(self, connection_id, generation) -> None:
+        with self.db.session() as session:
+            attempt = session.scalar(select(m.LoginAttempt).where(
+                m.LoginAttempt.connection_id == connection_id,
+                m.LoginAttempt.generation == generation,
+                m.LoginAttempt.state == "queued",
+            ).order_by(m.LoginAttempt.created_at.desc()))
+            if attempt is not None:
+                attempt.state = "authenticating"
 
     def _reserve_single_login(self, connection_id, owner_id, generation) -> bool:
         """Persist the no-retry login budget across worker restarts."""
@@ -358,11 +394,19 @@ class Worker:
             sources = session.scalars(select(m.CourseSource).join(m.CourseSelection, m.CourseSelection.source_id == m.CourseSource.id).where(m.CourseSource.connection_id == connection.id, m.CourseSelection.selection_state.in_(allowed))).all()
             source_refs = [(x.id, x.remote_course_id) for x in sources]
 
-        course_semaphore = asyncio.Semaphore(4)
+        course_semaphore = asyncio.Semaphore(6)
+        courses_total = len(source_refs)
+        courses_done = 0
+        self._update_progress(
+            job_id, "scanning" if courses_total else "details",
+            25 if courses_total else 95,
+            courses_done=0, courses_total=courses_total,
+        )
 
         in_flight = {"scan": 0, "detail": 0}
 
         async def scan_source(source_id, remote_id):
+            nonlocal courses_done
             queued = time.perf_counter()
             started, outcome = None, "ok"
             try:
@@ -393,6 +437,13 @@ class Worker:
                     "warnings": (getattr(exc, "code", "course_refresh_failed"),),
                 }
             finally:
+                courses_done += 1
+                if courses_total:
+                    self._update_progress(
+                        job_id, "scanning",
+                        25 + round(30 * courses_done / courses_total),
+                        courses_done=courses_done, courses_total=courses_total,
+                    )
                 if started is not None:
                     _timing("fetch_course", started, source=source_id, outcome=outcome, queue_wait=f"{started - queued:.2f}s", concurrent=peers if outcome == "ok" else "-")
 
@@ -451,24 +502,47 @@ class Worker:
                 "warnings": warnings, "details": [],
             })
 
-        detail_semaphore = asyncio.Semaphore(8)
+        detail_semaphore = asyncio.Semaphore(12)
+        has_detail_fetcher = hasattr(adapter, "fetch_item_detail")
+
+        detail_targets: list[tuple[dict, object]] = []
+        passthrough_results: list[tuple[dict, dict]] = []
+        for source in prepared:
+            for item_ref in source["records"]:
+                item_kind = getattr(item_ref, "kind", None)
+                if item_kind == "material":
+                    continue
+                if not has_detail_fetcher:
+                    passthrough_results.append((
+                        source,
+                        {"records": ({"item": _plain(item_ref), "content_text": None, "published_at": None},), "complete": True, "warnings": ()},
+                    ))
+                    continue
+                if item_kind == "announcement" and _is_placeholder_announcement(item_ref):
+                    # Course-navigation link, not an announcement: there is no body to fetch.
+                    continue
+                if item_kind == "announcement":
+                    cached_announcement = source["cached_announcements"].get(str(getattr(item_ref, "remote_id", "")))
+                    if not self._needs_announcement_refresh(cached_announcement):
+                        continue
+                else:
+                    cached = source["cached"].get((item_kind, str(getattr(item_ref, "remote_id", ""))))
+                    if not self._needs_detail_refresh(cached):
+                        continue
+                detail_targets.append((source, item_ref))
+
+        items_total = len(detail_targets)
+        items_done = 0
+        last_progress_flush = time.monotonic()
+        self._update_progress(
+            job_id, "details", 55 if items_total else 98,
+            courses_done=courses_total, courses_total=courses_total,
+            items_done=0, items_total=items_total,
+        )
 
         async def fetch_detail(source, item_ref):
+            nonlocal items_done, last_progress_flush
             item_kind = getattr(item_ref, "kind", None)
-            if item_kind == "material":
-                return source, None
-            if not hasattr(adapter, "fetch_item_detail"):
-                return source, {"records": ({"item": _plain(item_ref), "content_text": None, "published_at": None},), "complete": True, "warnings": ()}
-            if item_kind == "announcement" and _is_placeholder_announcement(item_ref):
-                # Course-navigation link, not an announcement: there is no body to fetch.
-                return source, None
-            if item_kind == "announcement":
-                cached_announcement = source["cached_announcements"].get(str(getattr(item_ref, "remote_id", "")))
-                if not self._needs_announcement_refresh(cached_announcement):
-                    return source, None
-            cached = source["cached"].get((item_kind, str(getattr(item_ref, "remote_id", ""))))
-            if item_kind != "announcement" and not self._needs_detail_refresh(cached):
-                return source, None
             queued = time.perf_counter()
             started, outcome, peers = None, "ok", "-"
             try:
@@ -492,16 +566,25 @@ class Worker:
                 logging.exception("item detail failed during incremental sync")
                 return source, {"records": (), "complete": False, "warnings": (getattr(exc, "code", "item_detail_failed"),)}
             finally:
+                items_done += 1
+                now_mono = time.monotonic()
+                if items_total and (items_done == items_total or now_mono - last_progress_flush >= 0.3):
+                    last_progress_flush = now_mono
+                    self._update_progress(
+                        job_id, "details", 55 + round(43 * items_done / items_total),
+                        courses_done=courses_total, courses_total=courses_total,
+                        items_done=items_done, items_total=items_total,
+                    )
                 if started is not None:
                     _timing("fetch_item_detail", started, kind=item_kind, outcome=outcome, queue_wait=f"{started - queued:.2f}s", concurrent=peers)
 
         _detail_started = time.perf_counter()
-        detail_results = await asyncio.gather(*(
+        fetched_details = await asyncio.gather(*(
             fetch_detail(source, item_ref)
-            for source in prepared
-            for item_ref in source["records"]
+            for source, item_ref in detail_targets
         ))
-        _timing("detail_pass_total", _detail_started, items=len(detail_results), fetched=sum(1 for _s, r in detail_results if r is not None))
+        detail_results = [*passthrough_results, *fetched_details]
+        _timing("detail_pass_total", _detail_started, items=len(detail_results), fetched=len(fetched_details))
         for source, detail_result in detail_results:
             if detail_result is None:
                 continue
@@ -564,7 +647,11 @@ class Worker:
             if job.preferences_version != self._preferences_version(session, connection.id):
                 job.state, job.error_code, job.finished_at = "cancelled", "stale_generation", self.clock()
                 return False
-            selection = session.scalar(select(m.CourseSelection).where(m.CourseSelection.source_id == source_id, m.CourseSelection.selection_state == "selected"))
+            allowed_states = ("selected", "pending") if connection.last_success_at is None else ("selected",)
+            selection = session.scalar(select(m.CourseSelection).where(
+                m.CourseSelection.source_id == source_id,
+                m.CourseSelection.selection_state.in_(allowed_states),
+            ))
             if not selection:
                 return False
             for detail in records:
@@ -1069,6 +1156,17 @@ class Worker:
                         connection.auth_state, connection.error_code = "temporarily_unavailable", error_code
                     return
                 job.state, job.error_code, job.finished_at, job.lease_until = state, error_code, self.clock(), None
+                try:
+                    existing_progress = json.loads(job.progress or "{}")
+                except ValueError:
+                    existing_progress = {}
+                if state == "waiting_user":
+                    existing_progress["phase"] = "waiting_user"
+                elif state in {"succeeded", "partial"}:
+                    existing_progress.update({"phase": "done", "percent": 100})
+                elif state in {"failed", "cancelled"}:
+                    existing_progress.update({"phase": "failed", "percent": 100})
+                job.progress = json.dumps(existing_progress, ensure_ascii=False)
                 connection = session.get(m.PlatformConnection, job.connection_id)
                 if connection and connection.generation == job.generation and state in {"failed", "partial"}:
                     connection.error_code = error_code
@@ -1102,7 +1200,7 @@ class Worker:
             except Exception:
                 logging.exception("timed-out platform sync failed during cleanup")
 
-    async def run(self, poll_seconds=2.0):
+    async def run(self, poll_seconds=0.5):
         lock_path = self.settings.runtime_dir / "worker.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock:
@@ -1193,18 +1291,21 @@ async def run_worker(settings, *, adapters=None, worker_id=None, stop_event=None
                      retry_delays=(1, 5, 15), periodic_sync=True):
     """Stable CLI/dev entry point. Returns after cancellation or stop_event."""
     playwright = browser = captcha_solver = managed_browser = None
+    adapter_lock = asyncio.Lock()
+
     async def load_adapters():
         nonlocal playwright, browser, captcha_solver
-        if browser is None:
-            from playwright.async_api import async_playwright
-            from ecourse.adapters import create_platform_adapters
-            from ecourse.decaptcha import OAuthCaptchaSolver
-            if playwright is None:
-                playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(headless=True, chromium_sandbox=settings.chromium_sandbox)
-            captcha_solver = OAuthCaptchaSolver(browser)
-            return create_platform_adapters(browser, captcha_solver)
-        return {}
+        async with adapter_lock:
+            if browser is None:
+                from playwright.async_api import async_playwright
+                from ecourse.adapters import create_platform_adapters
+                from ecourse.decaptcha import OAuthCaptchaSolver
+                if playwright is None:
+                    playwright = await async_playwright().start()
+                browser = await playwright.chromium.launch(headless=True, chromium_sandbox=settings.chromium_sandbox)
+                captcha_solver = OAuthCaptchaSolver(browser)
+                return create_platform_adapters(browser, captcha_solver)
+            return {}
 
     async def open_managed_platform(storage_state, target_url):
         nonlocal playwright, managed_browser
@@ -1236,6 +1337,19 @@ async def run_worker(settings, *, adapters=None, worker_id=None, stop_event=None
                 installed.append(signum)
             except (NotImplementedError, RuntimeError):
                 pass
+    warmup_task = None
+    if adapters is None:
+        async def _warmup():
+            try:
+                loaded = await load_adapters()
+                if loaded:
+                    worker.adapters.update(loaded)
+                if captcha_solver is not None:
+                    await captcha_solver.warmup()
+            except Exception:
+                # Warmup is best-effort; process_job can still load on demand.
+                pass
+        warmup_task = asyncio.create_task(_warmup())
     try:
         runner = asyncio.create_task(worker.run())
         waiter = asyncio.create_task(shutdown.wait())
@@ -1249,8 +1363,18 @@ async def run_worker(settings, *, adapters=None, worker_id=None, stop_event=None
             await asyncio.gather(waiter, return_exceptions=True)
             await runner
     finally:
+        if warmup_task is not None and not warmup_task.done():
+            warmup_task.cancel()
+            await asyncio.gather(warmup_task, return_exceptions=True)
         for signum in installed:
             loop.remove_signal_handler(signum)
+        for adapter in list(worker.adapters.values()):
+            close_fn = getattr(adapter, "close", None)
+            if close_fn is not None:
+                try:
+                    await close_fn()
+                except Exception:
+                    pass
         try:
             if captcha_solver:
                 await captcha_solver.close()

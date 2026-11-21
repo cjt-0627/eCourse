@@ -625,3 +625,52 @@ def test_course_overview_excludes_cached_platform_tutorial_and_marks_single_pend
     detail = client.get(f"/courses/{course_id}").text
     assert 'section class="panel source-settings"' in detail
     assert 'data-state="none"' in detail
+
+
+def test_initial_sync_gate_renders_progress_bar_without_inline_styles(web):
+    import json
+    from sqlalchemy import select
+    from ecourse.db.models import SyncJob
+    from ecourse.services import Service
+
+    client, settings, db, owner = web
+    login(client)
+    service = Service(settings)
+    credential = service.save_credentials(owner.id, "student-p", "secret-p")
+    service.connect(owner.id, "elearn", credential["id"])
+    service.complete_tutorial(owner.id)
+    with db.session() as session:
+        elearn_conn = session.scalar(select(PlatformConnection).where(PlatformConnection.owner_id == owner.id, PlatformConnection.platform == "elearn"))
+        job = session.scalar(select(SyncJob).where(SyncJob.connection_id == elearn_conn.id))
+        job.state = "running"
+        job.progress = json.dumps({
+            "phase": "details", "percent": 72,
+            "courses_done": 4, "courses_total": 4,
+            "items_done": 10, "items_total": 20,
+        })
+    response = client.get("/")
+    assert "style-src 'self'" in response.headers["Content-Security-Policy"]
+    html = response.text
+    assert 'id="first-sync-bar"' in html
+    assert 'value="45"' in html
+    assert 'style="' not in html
+    payload = client.get("/api/v1/initial-sync").json()["data"]
+    assert payload["done"] is False
+    elearn = next(p for p in payload["platforms"] if p["platform"] == "elearn")
+    assert elearn["percent"] == 72
+    assert elearn["phase"] == "details"
+    assert elearn["items_done"] == 10
+    assert elearn["items_total"] == 20
+    assert payload["percent"] == round(sum(p["percent"] for p in payload["platforms"]) / len(payload["platforms"]))
+
+
+def test_exponential_progress_curve_starts_slow_and_accelerates():
+    from ecourse.web.app import _exp_progress
+
+    assert _exp_progress(0) == 0
+    assert _exp_progress(100) == 100
+    assert _exp_progress(40, done=True) == 100
+    early_gain = _exp_progress(30) - _exp_progress(0)
+    mid_gain = _exp_progress(60) - _exp_progress(30)
+    late_gain = _exp_progress(90) - _exp_progress(60)
+    assert 0 < early_gain < mid_gain < late_gain

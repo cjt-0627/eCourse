@@ -130,3 +130,126 @@ class SharedContextPool:
             entry.loop.create_task(close())
         else:
             entry.loop.call_soon_threadsafe(lambda: entry.loop.create_task(close()))
+
+
+class _HttpEntry:
+    __slots__ = ("client", "loop", "users", "timer", "broken")
+
+    def __init__(self, client, loop):
+        self.client = client
+        self.loop = loop
+        self.users = 0
+        self.timer = None
+        self.broken = False
+
+
+class LeasedHttp:
+    """Thin lease wrapper over a shared ElearnHttp/EeclassHttp client."""
+
+    def __init__(self, pool: "SharedHttpPool", key: str, entry: _HttpEntry):
+        self._pool, self._key, self._entry = pool, key, entry
+        self._released = False
+
+    def __getattr__(self, name: str):
+        return getattr(self._entry.client, name)
+
+    def invalidate(self) -> None:
+        self._entry.broken = True
+
+    async def aclose(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._pool._release(self._key, self._entry)
+
+
+class SharedHttpPool:
+    """Share one authenticated httpx client (keep-alive + solved WAF cookies) across a sync."""
+
+    def __init__(self, idle_seconds: float = IDLE_SECONDS, max_clients: int = MAX_CONTEXTS):
+        self.idle_seconds = idle_seconds
+        self.max_clients = max_clients
+        self._entries: dict[str, _HttpEntry] = {}
+
+    @staticmethod
+    def _key(storage_state: dict[str, Any]) -> str:
+        return SharedContextPool._key(storage_state)
+
+    def lease(self, storage_state: dict[str, Any], factory):
+        loop = asyncio.get_running_loop()
+        key = self._key(storage_state)
+        entry = self._entries.get(key)
+        if entry is not None and (entry.broken or entry.loop is not loop):
+            self._entries.pop(key, None)
+            self._discard(entry)
+            entry = None
+        if entry is None:
+            client = factory(storage_state)
+            if not getattr(client, "usable", False):
+                return None
+            if len(self._entries) >= self.max_clients:
+                for old_key, old in list(self._entries.items()):
+                    if old.users == 0:
+                        self._entries.pop(old_key, None)
+                        self._discard(old)
+                        break
+            entry = _HttpEntry(client, loop)
+            self._entries[key] = entry
+        if entry.timer is not None:
+            entry.timer.cancel()
+            entry.timer = None
+        entry.users += 1
+        return LeasedHttp(self, key, entry)
+
+    def _release(self, key: str, entry: _HttpEntry) -> None:
+        entry.users -= 1
+        if entry.users > 0:
+            return
+        if entry.broken or entry.loop.is_closed():
+            self._discard_entry(key, entry)
+            return
+        entry.timer = entry.loop.call_later(self.idle_seconds, self._expire, key, entry)
+
+    def _expire(self, key: str, entry: _HttpEntry) -> None:
+        if entry.users == 0:
+            self._discard_entry(key, entry)
+
+    def _discard_entry(self, key: str, entry: _HttpEntry) -> None:
+        if self._entries.get(key) is entry:
+            del self._entries[key]
+        self._discard(entry)
+
+    async def close(self) -> None:
+        entries = list(self._entries.values())
+        self._entries.clear()
+        for entry in entries:
+            if entry.timer is not None:
+                entry.timer.cancel()
+                entry.timer = None
+            try:
+                await entry.client.aclose()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _discard(entry: _HttpEntry) -> None:
+        if entry.timer is not None:
+            entry.timer.cancel()
+            entry.timer = None
+        if entry.loop.is_closed():
+            return
+
+        async def close():
+            try:
+                await entry.client.aclose()
+            except Exception:
+                pass
+
+        try:
+            running = asyncio.get_running_loop() is entry.loop
+        except RuntimeError:
+            running = False
+        if running:
+            entry.loop.create_task(close())
+        else:
+            entry.loop.call_soon_threadsafe(lambda: entry.loop.create_task(close()))

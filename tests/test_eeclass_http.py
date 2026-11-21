@@ -173,3 +173,21 @@ def test_dashboard_courses_and_codes_over_http():
     result = asyncio.run(adapter(handler).discover_courses(state()))
     assert result.records and result.complete
     assert all(course.course_code == "11510CS135601" for course in result.records)
+
+
+def test_http_client_is_reused_across_calls_for_the_same_session():
+    http_adapter = adapter(lambda request: page("ok"))
+    session_state = state("pooled-session")
+
+    async def run():
+        first = http_adapter._http(session_state)
+        second = http_adapter._http(session_state)
+        try:
+            assert first is not None and second is not None
+            assert first._client is second._client
+        finally:
+            await first.aclose()
+            await second.aclose()
+            await http_adapter.close()
+
+    asyncio.run(run())

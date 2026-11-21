@@ -114,6 +114,16 @@ class Service:
                 owner.tutorial_completed_at = self.clock()
         return {"tutorial_completed": True}
 
+    @staticmethod
+    def _parse_progress(job) -> dict:
+        if job is None or not getattr(job, "progress", None):
+            return {}
+        try:
+            data = json.loads(job.progress)
+            return data if isinstance(data, dict) else {}
+        except ValueError:
+            return {}
+
     def initial_sync_status(self, owner_id: str) -> dict:
         """Whether every connected platform has finished its first fetch (success or not)."""
         finished = {"succeeded", "partial", "failed", "cancelled"}
@@ -129,9 +139,37 @@ class Service:
                 ).order_by(m.SyncJob.scheduled_at.desc()).limit(1))
                 state = job.state if job else None
                 done = connection.last_success_at is not None or state in finished or connection.auth_state in {"not_connected", "credentials_invalid"}
-                platforms.append({"platform": connection.platform, "done": done, "state": state, "needs_attention": state == "waiting_user" or connection.auth_state == "challenge_required"})
+                needs_attention = state == "waiting_user" or connection.auth_state == "challenge_required"
+                raw = self._parse_progress(job)
+                if done:
+                    phase = "failed" if state in {"failed", "cancelled"} or connection.auth_state == "credentials_invalid" else "done"
+                    percent = 100
+                elif needs_attention:
+                    phase = "waiting_user"
+                    percent = max(15, int(raw.get("percent", 15)))
+                elif raw:
+                    phase = str(raw.get("phase") or ("authenticating" if state == "running" else "queued"))
+                    percent = max(0, min(99, int(raw.get("percent", 15 if state == "running" else 5))))
+                else:
+                    phase = "authenticating" if state == "running" else "queued"
+                    percent = 15 if state == "running" else 5
+                platforms.append({
+                    "platform": connection.platform,
+                    "done": done,
+                    "state": state,
+                    "needs_attention": needs_attention,
+                    "phase": phase,
+                    "percent": percent,
+                    "courses_done": int(raw.get("courses_done", 0)),
+                    "courses_total": int(raw.get("courses_total", 0)),
+                    "items_done": int(raw.get("items_done", 0)),
+                    "items_total": int(raw.get("items_total", 0)),
+                })
+        all_done = all(item["done"] for item in platforms)
+        overall_percent = 100 if (all_done or not platforms) else round(sum(item["percent"] for item in platforms) / len(platforms))
         return {
-            "done": all(item["done"] for item in platforms),
+            "done": all_done,
+            "percent": overall_percent,
             "needs_attention": any(item["needs_attention"] for item in platforms),
             "platforms": platforms,
             "tutorial_completed": bool(owner and owner.tutorial_completed_at),
@@ -769,7 +807,12 @@ class Service:
 
     @staticmethod
     def _job(job, platform=None):
-        return {**_dict(job, exclude=("owner_id", "connection_id")), "platform": platform, "coverage": json.loads(job.coverage or "{}")}
+        return {
+            **_dict(job, exclude=("owner_id", "connection_id")),
+            "platform": platform,
+            "coverage": json.loads(job.coverage or "{}"),
+            "progress": Service._parse_progress(job),
+        }
 
     def system_status(self, owner_id: str) -> dict:
         now = self.clock()

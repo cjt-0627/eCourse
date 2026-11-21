@@ -16,6 +16,7 @@ from ecourse.parsing.html import normalize_course_code, parse_courses, parse_eec
 from .base import AdapterStatus, CaptchaSolver, CourseItem, FetchResult, ItemDetail, SessionVerification
 from .eeclass_http import EeclassHttp, NeedsBrowser, RateLimited, SessionExpired, UpstreamTimeout, html_to_text
 from .nthu_sso import NthuSsoMixin, SSO_HOST
+from .shared_context import SharedHttpPool
 
 _MAIN_SELECTOR = "#fs-content, #page-main, main, #content, .page-content, [role='main']"
 _COURSE_REGION_SELECTOR = "[data-role*='course'], .course-list, #course-list, [class*='courseList']"
@@ -40,12 +41,19 @@ class EeclassAdapter(NthuSsoMixin):
         # ECOURSE_EECLASS_HTTP=0 turns the HTTP path off.
         self.use_http = os.environ.get("ECOURSE_EECLASS_HTTP", "1") != "0" if use_http is None else use_http
         self.http_transport = http_transport
+        self._http_pool = SharedHttpPool()
 
-    def _http(self, storage_state: dict[str, Any]) -> EeclassHttp | None:
+    def _http(self, storage_state: dict[str, Any]):
         if not self.use_http:
             return None
-        session = EeclassHttp(storage_state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0))
-        return session if session.usable else None
+        return self._http_pool.lease(
+            storage_state,
+            lambda state: EeclassHttp(state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0)),
+        )
+
+    async def close(self) -> None:
+        await self._http_pool.close()
+        await super().close()
 
     async def _verify_page(self, page: Page) -> SessionVerification:
         if urlparse(page.url).hostname != "eeclass.nthu.edu.tw" or urlparse(page.url).path == "/":
