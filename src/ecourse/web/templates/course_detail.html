@@ -22,7 +22,6 @@
 {% endif %}
 {% if section == 'settings' %}
 <section class="panel source-settings"><h2>{{ t('課程資料來源') }}{% if data.get('selection_required') %} · {{ t('待設定') }}{% endif %}</h2>
-<p class="fine">{{ t('選擇一個來源，或選擇「無」停用這門課的線上資料。') }}</p>
 <div class="source-options">
 {% for source in data.get('sources',[]) %}<button class="source-option {{ 'selected' if source.get('selection_state') == 'selected' else 'secondary' }}" data-action="course-selection" data-course="{{ data.get('id') }}" data-source="{{ source.get('id') }}" data-version="{{ source.get('preference_version',1) }}" data-state="selected" aria-pressed="{{ 'true' if source.get('selection_state') == 'selected' else 'false' }}"><span>{{ 'eLearn' if source.get('platform') == 'elearn' else 'eeclass' }}</span><small>{{ t('目前使用') if source.get('selection_state') == 'selected' else t('使用此來源') }}</small></button>{% endfor %}
 {% if data.get('sources') %}{% set source=data.get('sources')[0] %}<button class="source-option {{ 'selected' if data.get('disabled') else 'secondary' }}" data-action="course-selection" data-course="{{ data.get('id') }}" data-source="{{ source.get('id') }}" data-version="{{ source.get('preference_version',1) }}" data-state="none" aria-pressed="{{ 'true' if data.get('disabled') else 'false' }}"><span>{{ t('無') }}</span><small>{{ t('不使用線上平台') }}</small></button>{% endif %}
@@ -31,25 +30,25 @@
 
 
 {% if section == 'materials' %}
-<section class="panel course-section" id="materials"><header><div><h2>{{ t('教材') }}</h2><p>{{ t('在這裡瀏覽所有已同步的教材，並使用已登入狀態開啟或下載。') }}</p></div></header>
+<section class="panel course-section" id="materials"><header><div><h2>{{ t('教材') }}</h2></div></header>
 {% for material in data.get('materials',[]) %}<article class="row resource-row"><div><strong>{{ material.get('title') }}</strong><small>{{ material.get('section_title') or t('未分類') }} · {{ material.get('kind') or t('教材') }} · {{ 'eLearn' if material.get('platform') == 'elearn' else 'eeclass' }}</small></div>{% if material.get('external_url') %}<button class="secondary" data-action="open-platform" data-platform="{{ material.get('platform') }}" data-target-url="{{ material.get('external_url') }}">{{ t('開啟／下載') }}</button>{% endif %}</article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的教材。') }}</p></div>{% endfor %}
 </section>
 {% endif %}
 
 {% if section == 'assignments' %}
-<section class="panel course-section" id="assignments"><header><div><h2>{{ t('作業與測驗') }}</h2><p>{{ t('查看期限、繳交狀態與題目內容。') }}</p></div></header>
+<section class="panel course-section" id="assignments"><header><div><h2>{{ t('作業與測驗') }}</h2></div></header>
 {% for item in data.get('items',[]) %}<article class="row"><div><a href="/items/{{ item.get('id') }}"><strong>{{ item.get('title') }}</strong></a><small>{{ t('測驗') if item.get('kind') == 'quiz' else t('作業') }} · {{ (item.get('due_at') or item.get('closes_at') or item.get('due_date'))|taipei if (item.get('due_at') or item.get('closes_at') or item.get('due_date')) else t('期限未提供') }}</small></div><div class="actions">{% if item.get('grade_text') %}<span class="grade">{{ item.get('grade_text') }}</span>{% endif %}<span class="badge">{{ item.get('remote_status_text') or t('狀態待確認') }}</span></div></article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的作業或測驗。') }}</p></div>{% endfor %}
 </section>
 {% endif %}
 
 {% if section == 'grades' %}
-<section class="panel course-section" id="grades"><header><div><h2>{{ t('成績') }}</h2><p>{{ t('直接查看已公布的成績與評分狀態。') }}</p></div></header>
+<section class="panel course-section" id="grades"><header><div><h2>{{ t('成績') }}</h2></div></header>
 {% for item in data.get('grades',[]) %}<article class="row"><div><a href="/items/{{ item.get('id') }}"><strong>{{ item.get('title') }}</strong></a><small>{{ item.get('grading_status_text') or item.get('remote_status_text') or t('已同步') }}</small></div><span class="grade">{{ item.get('grade_text') or t('尚未公布') }}</span></article>{% else %}<div class="empty compact"><p>{{ t('目前沒有已公布的成績。') }}</p></div>{% endfor %}
 </section>
 {% endif %}
 
 {% if section == 'announcements' %}
-<section class="panel course-section" id="announcements"><header><div><h2>{{ t('公告') }}</h2><p>{{ t('點開公告就能直接在這裡閱讀全文。') }}</p></div></header>{% for announcement in data.get('announcements',[]) %}<details class="announcement-card"><summary><span><strong>{{ announcement.get('title') }}</strong><small>{{ announcement.get('published_at')|taipei if announcement.get('published_at') else t('發布時間未提供') }}</small></span></summary><div class="announcement-body">{% if announcement.get('body_sanitized') %}<p class="preserve">{{ announcement.get('body_sanitized') }}</p>{% else %}<p class="muted">{{ t('全文尚未同步，請先按「更新課程」。') }}</p>{% endif %}<div class="actions"><a class="button secondary" href="/announcements/{{ announcement.get('id') }}">{{ t('單獨開啟公告') }}</a>{% if announcement.get('external_url') %}<button class="secondary" data-action="open-platform" data-platform="{{ announcement.get('platform') }}" data-target-url="{{ announcement.get('external_url') }}">{{ t('備用：開啟原平台') }}</button>{% endif %}</div></div></details>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的公告。') }}</p></div>{% endfor %}</section>
+<section class="panel course-section" id="announcements"><header><div><h2>{{ t('公告') }}</h2></div></header>{% for announcement in data.get('announcements',[]) %}<details class="announcement-card"><summary><span><strong>{{ announcement.get('title') }}</strong><small>{{ announcement.get('published_at')|taipei if announcement.get('published_at') else t('發布時間未提供') }}</small></span></summary><div class="announcement-body">{% if announcement.get('body_sanitized') %}<p class="preserve">{{ announcement.get('body_sanitized') }}</p>{% else %}<p class="muted">{{ t('全文尚未同步，請先按「更新課程」。') }}</p>{% endif %}<div class="actions"><a class="button secondary" href="/announcements/{{ announcement.get('id') }}">{{ t('單獨開啟公告') }}</a>{% if announcement.get('external_url') %}<button class="secondary" data-action="open-platform" data-platform="{{ announcement.get('platform') }}" data-target-url="{{ announcement.get('external_url') }}">{{ t('備用：開啟原平台') }}</button>{% endif %}</div></div></details>{% else %}<div class="empty compact"><p>{{ t('目前沒有已同步的公告。') }}</p></div>{% endfor %}</section>
 {% endif %}
 
 

@@ -87,9 +87,27 @@
 {% macro gate() %}
 <div id="first-sync" class="tour" role="alertdialog" aria-modal="true" aria-labelledby="first-sync-title" data-poll>
   <div class="tour-card tour-loading">
-    <div class="spinner" aria-hidden="true"></div>
     <h2 id="first-sync-title">{{ t('正在抓取你的課程資料…') }}</h2>
-    <p class="fine">{{ t('第一次會同時讀取 eLearn 與 eeclass，需要一點時間。完成後會自動進入總覽。') }}</p>
+    <p class="fine" id="first-sync-stage">{{ t('第一次會同時讀取 eLearn 與 eeclass，完成後會自動進入總覽。') }}</p>
+    {% set shown_overall = first_run.percent|exp_progress(first_run.done) %}
+    <div class="sync-progress-wrap">
+      <div class="sync-progress-head">
+        <span id="first-sync-summary">{{ t('準備中…') }}</span>
+        <strong id="first-sync-percent">{{ shown_overall }}%</strong>
+      </div>
+      <progress id="first-sync-bar" class="sync-progress" max="100" value="{{ shown_overall }}"></progress>
+    </div>
+    <ul class="sync-platforms" id="first-sync-platforms" aria-live="polite">
+      {% for p in first_run.platforms %}
+      <li class="sync-platform" data-platform="{{ p.platform }}">
+        <div class="sync-platform-row">
+          <span class="sync-platform-name">{{ 'eLearn' if p.platform == 'elearn' else 'eeclass' }}</span>
+          <span class="sync-platform-detail" data-role="detail">{{ t('已完成') if p.done else t('準備中…') }}</span>
+        </div>
+        <progress class="sync-progress sync-progress-sm{{ ' is-done' if p.done else '' }}" max="100" value="{{ p.percent|exp_progress(p.done) }}"></progress>
+      </li>
+      {% endfor %}
+    </ul>
     <p class="fine" id="first-sync-attention" hidden>{{ t('需要輸入驗證碼才能繼續。') }} <a href="/settings/connections">{{ t('前往連接設定') }}</a></p>
     <button class="link" type="button" data-tour="enter">{{ t('先進入總覽') }}</button>
   </div>

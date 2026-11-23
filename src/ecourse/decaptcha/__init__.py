@@ -38,6 +38,11 @@ class OAuthCaptchaSolver:
         self._context, self._page = context, page
         return page
 
+    async def warmup(self) -> None:
+        """Pre-load the inference page and model weights before the first login."""
+        async with self._lock:
+            await self._page_for_inference()
+
     async def solve(self, image: bytes) -> CaptchaSolution:
         started = time.perf_counter()
         try:

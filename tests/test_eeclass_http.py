@@ -68,13 +68,33 @@ def test_course_lists_are_fetched_over_http_without_a_browser():
 
     def handler(request):
         seen.append(request)
+        if request.url.path == "/course/score/101":
+            return page("<table><thead><tr><th>姓名</th><th>Midterm (15%)</th><th>等級</th></tr></thead><tbody><tr><td>測試生</td><td>100</td><td>A</td></tr></tbody></table>")
         return httpx.Response(200, text=(FIXTURES / routes[request.url.path]).read_text())
 
     result = asyncio.run(adapter(handler).fetch_course(state(), "101"))
     assert result.complete and set(result.coverage) == {"assignment", "quiz", "announcement", "material"}
-    assert {item.kind for item in result.records} >= {"assignment", "announcement", "material"}
-    assert len(seen) == 4
+    assert {item.kind for item in result.records} >= {"assignment", "announcement", "material", "grade"}
+    assert len(seen) == 5
     assert all(request.headers["cookie"] == "eeclass_session=v1" for request in seen)  # no SSO cookie leaks
+
+
+def test_course_score_403_does_not_fail_course_fetch():
+    routes = {
+        "/course/homeworkList/101": "eeclass_homework_list.html",
+        "/course/examList/101": "eeclass_exam_list.html",
+        "/course/bulletin/101": "eeclass_bulletin_list.html",
+        "/course/material/101": "eeclass_material_list.html",
+    }
+
+    def handler(request):
+        if request.url.path == "/course/score/101":
+            return httpx.Response(403, text="forbidden")
+        return httpx.Response(200, text=(FIXTURES / routes[request.url.path]).read_text())
+
+    result = asyncio.run(adapter(handler).fetch_course(state(), "101"))
+    assert result.complete is True
+    assert set(result.coverage) == {"assignment", "quiz", "announcement", "material"}
 
 
 def test_expired_session_is_reported_without_using_the_browser():
@@ -173,3 +193,21 @@ def test_dashboard_courses_and_codes_over_http():
     result = asyncio.run(adapter(handler).discover_courses(state()))
     assert result.records and result.complete
     assert all(course.course_code == "11510CS135601" for course in result.records)
+
+
+def test_http_client_is_reused_across_calls_for_the_same_session():
+    http_adapter = adapter(lambda request: page("ok"))
+    session_state = state("pooled-session")
+
+    async def run():
+        first = http_adapter._http(session_state)
+        second = http_adapter._http(session_state)
+        try:
+            assert first is not None and second is not None
+            assert first._client is second._client
+        finally:
+            await first.aclose()
+            await second.aclose()
+            await http_adapter.close()
+
+    asyncio.run(run())
