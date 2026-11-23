@@ -4,49 +4,7 @@
     <button class="link tour-skip" type="button" data-tour="skip">{{ t('跳過') }}</button>
     <div class="tour-slides">
 
-      <section class="tour-slide" data-title="{{ t('待辦：所有作業與考試一覽') }}">
-        <div class="tour-stage" aria-hidden="true">
-          <div class="mk-window">
-            <div class="mk-head">{{ t('待辦') }}</div>
-            <div class="mk-row"><i class="mk-check"></i><span>{{ t('微積分 作業三') }}</span><em>{{ t('明天') }}</em></div>
-            <div class="mk-row"><i class="mk-check"></i><span>{{ t('離散數學 小考') }}</span><em>{{ t('3 天後') }}</em></div>
-            <div class="mk-row"><i class="mk-check"></i><span>{{ t('程式設計 專題報告') }}</span><em>{{ t('下週') }}</em></div>
-          </div>
-        </div>
-        <h2>{{ t('待辦：所有作業與考試一覽') }}</h2>
-        <p>{{ t('eLearn 與 eeclass 的作業、測驗會集中在「待辦」，依期限排序；交了的會自動打勾。') }}</p>
-      </section>
-
-      <section class="tour-slide" data-title="{{ t('課程：教材與成績直接查看') }}">
-        <div class="tour-stage" aria-hidden="true">
-          <div class="mk-window">
-            <div class="mk-head">{{ t('微積分') }}</div>
-            <div class="mk-tabs"><b class="mk-tab t1">{{ t('教材') }}</b><b class="mk-tab t2">{{ t('成績') }}</b><b class="mk-tab t3">{{ t('公告') }}</b></div>
-            <div class="mk-panels">
-              <div class="mk-panel p1"><span>{{ t('第 1 週講義.pdf') }}</span><span>{{ t('第 2 週講義.pdf') }}</span></div>
-              <div class="mk-panel p2"><span>{{ t('作業一') }}</span><strong>95</strong><span>{{ t('期中考') }}</span><strong>88</strong></div>
-              <div class="mk-panel p3"><span>{{ t('期中考範圍公告') }}</span><span>{{ t('補課通知') }}</span></div>
-            </div>
-          </div>
-        </div>
-        <h2>{{ t('課程：教材與成績直接查看') }}</h2>
-        <p>{{ t('每門課都有教材、成績與公告，不用再到各平台一層層找。') }}</p>
-      </section>
-
-      <section class="tour-slide" data-title="{{ t('使用已登入狀態開啟') }}">
-        <div class="tour-stage" aria-hidden="true">
-          <div class="mk-window mk-open">
-            <div class="mk-head">{{ t('平台狀態') }}</div>
-            <div class="mk-row"><span>eeclass</span><button class="mk-btn" tabindex="-1" type="button">{{ t('使用已登入狀態開啟') }}</button></div>
-            <div class="mk-browser"><small>eeclass.nthu.edu.tw</small><strong>{{ t('已登入') }}</strong></div>
-            <i class="mk-cursor c-open"></i>
-          </div>
-        </div>
-        <h2>{{ t('使用已登入狀態開啟') }}</h2>
-        <p>{{ t('按一下就能用 eLearn 或 eeclass 的已登入狀態開啟原網站，不必重新輸入帳密與驗證碼。') }}</p>
-      </section>
-
-      <section class="tour-slide" data-title="{{ t('先到課程設定，選好每門課的來源') }}">
+      <section class="tour-slide" data-title="{{ t('先到「課程」選好每門課的來源') }}">
         <div class="tour-stage" aria-hidden="true">
           <div class="mk-window">
             <div class="mk-head">{{ t('課程設定') }} · {{ t('離散數學') }}</div>
@@ -57,20 +15,80 @@
             <i class="mk-cursor c-source"></i>
           </div>
         </div>
-        <h2>{{ t('先到課程設定，選好每門課的來源') }}</h2>
-        <p>{{ t('登入後第一次會把 eLearn 與 eeclass 的課程全部抓下來。同一門課兩邊都有時，請選擇要用哪個平台；之後只會更新你選的來源。') }}</p>
+        <h2>{{ t('先到「課程」選好每門課的來源') }}</h2>
+        <p>{{ t('第一次同步會把 eLearn 與 eeclass 的課程全部抓下來。點左側「課程」進入標有「待設定」的課程，選擇要用 eLearn、eeclass，或選「無」表示不使用線上平台。') }}</p>
       </section>
 
-      <section class="tour-slide" data-title="{{ t('平台異常時，到設定按「重試」') }}">
+      <section class="tour-slide" data-title="{{ t('課程：教材、作業測驗、成績與公告') }}">
         <div class="tour-stage" aria-hidden="true">
           <div class="mk-window">
-            <div class="mk-head">{{ t('設定') }} · {{ t('連接設定') }}</div>
+            <div class="mk-head">{{ t('微積分') }}</div>
+            <div class="mk-tabs"><b class="mk-tab t1">{{ t('教材') }}</b><b class="mk-tab t2">{{ t('作業與測驗') }}</b><b class="mk-tab t3">{{ t('成績') }}</b><b class="mk-tab t4">{{ t('公告') }}</b></div>
+            <div class="mk-panels">
+              <div class="mk-panel p1"><span>{{ t('第 1 週講義.pdf') }}</span><span>{{ t('第 2 週講義.pdf') }}</span></div>
+              <div class="mk-panel p2"><span>{{ t('作業三') }}</span><em>{{ t('明天') }}</em><span>{{ t('小考二') }}</span><em>{{ t('下週') }}</em></div>
+              <div class="mk-panel p3"><span>{{ t('作業一') }}</span><strong>95</strong><span>{{ t('期中考') }}</span><strong>88</strong></div>
+              <div class="mk-panel p4"><span>{{ t('期中考範圍公告') }}</span><span>{{ t('補課通知') }}</span></div>
+            </div>
+          </div>
+        </div>
+        <h2>{{ t('課程：教材、作業測驗、成績與公告') }}</h2>
+        <p>{{ t('點進任一門課，就能在同一個頁面切換查看教材、作業與測驗、成績及公告，不用再到各平台一層層找。') }}</p>
+      </section>
+
+      <section class="tour-slide" data-title="{{ t('使用已登入狀態開啟原網站') }}">
+        <div class="tour-stage" aria-hidden="true">
+          <div class="mk-window mk-open">
+            <div class="mk-head">{{ t('平台狀態') }}</div>
+            <div class="mk-row"><span>eeclass</span><button class="mk-btn" tabindex="-1" type="button">{{ t('使用已登入狀態開啟') }}</button></div>
+            <div class="mk-browser"><small>eeclass.nthu.edu.tw</small><strong>{{ t('已登入') }}</strong></div>
+            <i class="mk-cursor c-open"></i>
+          </div>
+        </div>
+        <h2>{{ t('使用已登入狀態開啟原網站') }}</h2>
+        <p>{{ t('在「總覽」的平台狀態，或教材與作業頁面按一下「使用已登入狀態開啟」，就能直接開啟已登入的 eLearn 或 eeclass，不必重打帳密與驗證碼。') }}</p>
+      </section>
+
+      <section class="tour-slide" data-title="{{ t('待辦：所有作業與考試一覽') }}">
+        <div class="tour-stage" aria-hidden="true">
+          <div class="mk-window">
+            <div class="mk-head">{{ t('待辦') }}</div>
+            <div class="mk-row"><i class="mk-check"></i><span>{{ t('微積分 作業三') }}</span><em>{{ t('明天') }}</em></div>
+            <div class="mk-row"><i class="mk-check"></i><span>{{ t('離散數學 小考') }}</span><em>{{ t('3 天後') }}</em></div>
+            <div class="mk-row"><i class="mk-check"></i><span>{{ t('程式設計 專題報告') }}</span><em>{{ t('下週') }}</em></div>
+          </div>
+        </div>
+        <h2>{{ t('待辦：所有作業與考試一覽') }}</h2>
+        <p>{{ t('eLearn 與 eeclass 的作業與測驗都會彙整在「待辦」，依期限排序並自動標記繳交狀態；也可依課程篩選，或點右上角「新增考試／事件」自行記錄。') }}</p>
+      </section>
+
+      <section class="tour-slide" data-title="{{ t('學校改密碼時，到「設定」更新帳密') }}">
+        <div class="tour-stage" aria-hidden="true">
+          <div class="mk-window mk-creds">
+            <div class="mk-head">{{ t('設定') }} · {{ t('校務帳密') }}</div>
+            <div class="mk-field"><span>{{ t('校務帳號') }}</span><code>112062101</code></div>
+            <div class="mk-field"><span>{{ t('校務密碼') }}</span><code>••••••••</code></div>
+            <div class="mk-creds-foot">
+              <span class="mk-saved">{{ t('已更新並重新連接') }}</span>
+              <button class="mk-btn mk-update-btn" tabindex="-1" type="button">{{ t('更新並重新連接') }}</button>
+            </div>
+            <i class="mk-cursor c-creds"></i>
+          </div>
+        </div>
+        <h2>{{ t('學校改密碼時，到「設定」更新帳密') }}</h2>
+        <p>{{ t('學校會定期要求更換密碼。改完校務密碼後，請到左側「設定 → 連接」重新輸入校務帳密並按「更新並重新連接」，即可繼續自動同步。') }}</p>
+      </section>
+
+      <section class="tour-slide" data-title="{{ t('平台異常時，到「設定」按「重試」') }}">
+        <div class="tour-stage" aria-hidden="true">
+          <div class="mk-window">
+            <div class="mk-head">{{ t('設定') }} · {{ t('連接') }}</div>
             <div class="mk-row"><span>eeclass</span><span class="mk-status"><b class="st-bad">{{ t('平台暫時無法使用') }}</b><b class="st-ok">{{ t('已登入') }}</b></span><button class="mk-btn mk-retry" tabindex="-1" type="button">{{ t('重試') }}</button></div>
             <i class="mk-cursor c-retry"></i>
           </div>
         </div>
-        <h2>{{ t('平台異常時，到設定按「重試」') }}</h2>
-        <p>{{ t('如果某個平台顯示無法使用或同步失敗，到「設定 → 連接設定」按「重試」就會重新登入並抓取。') }}</p>
+        <h2>{{ t('平台異常時，到「設定」按「重試」') }}</h2>
+        <p>{{ t('如果某個平台顯示無法使用、同步失敗或需要輸入驗證碼，請到左側「設定 → 連接」按「重試」重新登入抓取。之後隨時可點左下角「使用教學」重看本說明。') }}</p>
       </section>
 
     </div>
