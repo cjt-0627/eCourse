@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import secrets
 import time
 import uuid
@@ -153,6 +154,25 @@ def _taipei(value) -> str:
     except (TypeError, ValueError): return str(value)
 
 
+EXP_PROGRESS_K = 2.5
+EXP_PROGRESS_DENOM = math.expm1(EXP_PROGRESS_K)
+
+
+def _exp_progress(value, done: bool = False) -> int:
+    """Map linear 0..100 progress through a normalized exponential ease-in curve."""
+    if done:
+        return 100
+    try:
+        x = max(0.0, min(1.0, float(value or 0) / 100.0))
+    except (TypeError, ValueError):
+        return 0
+    if x <= 0.0:
+        return 0
+    if x >= 1.0:
+        return 100
+    return min(99, max(1, round((math.expm1(EXP_PROGRESS_K * x) / EXP_PROGRESS_DENOM) * 100)))
+
+
 def create_app(settings=None) -> FastAPI:
     settings = settings or Settings.from_env()
     db, service = Database(settings), Service(settings)
@@ -162,6 +182,7 @@ def create_app(settings=None) -> FastAPI:
     app.state.browser_handoffs = {}
     templates = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=select_autoescape(["html", "xml"]))
     templates.filters["taipei"] = _taipei
+    templates.filters["exp_progress"] = _exp_progress
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
     @app.middleware("http")

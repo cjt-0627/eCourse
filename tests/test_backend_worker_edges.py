@@ -1013,5 +1013,50 @@ def test_initial_sync_status_and_tutorial_completion(backend):
     with db.session() as session:
         session.scalars(select(SyncJob)).first().state = "succeeded"
     assert service.initial_sync_status(owner.id)["done"] is True
+    assert service.initial_sync_status(owner.id)["percent"] == 100
     assert service.complete_tutorial(owner.id) == {"tutorial_completed": True}
     assert service.initial_sync_status(owner.id)["tutorial_completed"] is True
+
+
+def test_worker_updates_live_sync_progress_and_commits_pending_on_first_sync(backend):
+    settings, db, owner = backend
+    service, public, _job_data = _connection_job(settings, db, owner)
+    with db.session() as session:
+        connection = session.get(PlatformConnection, public["connection"]["id"])
+        group = CourseGroup(owner_id=owner.id, display_name="演算法", term="2026")
+        source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="42", title="演算法")
+        session.add_all((group, source)); session.flush()
+        session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="pending"))
+        source_id = source.id
+
+    worker = Worker(settings, worker_id="progress-worker")
+    claimed = worker.claim_job()
+    observed = []
+
+    class ProgressAdapter:
+        async def fetch_course(self, storage_state, remote_id):
+            observed.append(service.initial_sync_status(owner.id))
+            return FetchResult(
+                (CourseItem(remote_id="hw-1", kind="assignment", title="作業一", url="https://elearn.nthu.edu.tw/mod/assign/view.php?id=1"),),
+                ("assignments",), True,
+            )
+
+        async def fetch_item_detail(self, storage_state, item_ref):
+            from dataclasses import replace
+            observed.append(service.initial_sync_status(owner.id))
+            return FetchResult(
+                ({"item": replace(item_ref, remote_status="not_submitted"), "content_text": None, "published_at": None},),
+                ("assignment_detail",), True,
+            )
+
+    complete = asyncio.run(worker._fetch_selected(claimed.id, ProgressAdapter(), {}))
+    assert complete is True
+    assert any(snapshot["platforms"][0]["phase"] == "scanning" for snapshot in observed)
+    assert any(snapshot["platforms"][0]["phase"] == "details" and snapshot["platforms"][0]["items_total"] == 1 for snapshot in observed)
+    final_snapshot = service.initial_sync_status(owner.id)
+    assert final_snapshot["platforms"][0]["percent"] == 98
+    assert final_snapshot["platforms"][0]["courses_done"] == 1
+    assert final_snapshot["platforms"][0]["items_done"] == 1
+    with db.session() as session:
+        items = session.scalars(select(LearningItem).where(LearningItem.source_course_id == source_id)).all()
+    assert len(items) == 1 and items[0].title == "作業一" and items[0].remote_status == "not_submitted"

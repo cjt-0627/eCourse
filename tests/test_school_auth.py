@@ -88,8 +88,10 @@ def test_existing_school_credential_authenticates_without_mutating_connections(b
     assert authenticate_school_credential(settings, " STUDENT-ID ", "school-password").id == owner.id
     assert authenticate_school_credential(settings, "student-id", "wrong-password") is None
     assert authenticate_school_credential(settings, "other-account", "school-password") is None
+    # A registered account with a wrong password must never start a new login
+    # that could rotate its connection.
     with pytest.raises(ValueError, match="校務登入失敗"):
-        begin_school_auth(settings, "other-account", "attacker-password")
+        begin_school_auth(settings, "student-id", "attacker-password")
     with db.session() as session:
         connection = session.get(PlatformConnection, connected["connection"]["id"])
         after = (connection.credential_id, connection.generation, connection.auth_state)
@@ -98,6 +100,21 @@ def test_existing_school_credential_authenticates_without_mutating_connections(b
         # A sign-in by an install that predates eeclass auto-connect adds it once.
         eeclass = session.query(PlatformConnection).filter_by(owner_id=owner.id, platform="eeclass").all()
         assert len(eeclass) == 1 and eeclass[0].generation == 1
+
+
+def test_a_different_school_account_gets_its_own_owner(backend):
+    settings, db, owner = backend
+    service = Service(settings)
+    credential = service.save_credentials(owner.id, "student-id", "school-password")
+    service.connect(owner.id, "elearn", credential["id"])
+    started = begin_school_auth(settings, "other-account", "other-password")
+    with db.session() as session:
+        exchange = session.query(SchoolLoginExchange).one()
+        assert exchange.owner_id != owner.id
+        assert session.query(Owner).count() == 2
+    assert started["state"] == "queued"
+    # The first account is untouched and still signs in as itself.
+    assert authenticate_school_credential(settings, "student-id", "school-password").id == owner.id
 
 
 def test_authenticated_settings_replaces_credentials_and_reconnects_both_platforms(backend):
@@ -227,6 +244,6 @@ def test_0004_upgrade_preserves_legacy_owner_child_tree(tmp_path):
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 1
         assert connection.execute("SELECT credential_id FROM platform_connections").fetchone()[0] == "credential"
         assert connection.execute("SELECT verified_at IS NOT NULL FROM credential_secrets").fetchone()[0] == 1
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0012"
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0013"
         assert connection.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='ai_settings'").fetchone()[0] == 0
         assert connection.execute("SELECT locale FROM owners").fetchone()[0] == "zh-Hant"

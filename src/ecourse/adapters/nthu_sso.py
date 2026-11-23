@@ -119,7 +119,8 @@ class NthuSsoMixin:
                     stage = "captcha_image"
                     image_locator = page.locator("#captcha_image, img[alt*='CAPTCHA']").first
                     await self._wait_for_captcha_image(image_locator)
-                    image = await image_locator.screenshot(timeout=self.timeout_ms)
+                    uses_element_solver = getattr(self.captcha_solver, "solve_element", None) is not None
+                    image = b"" if uses_element_solver else await image_locator.screenshot(timeout=self.timeout_ms)
                 attempt = LoginAttempt(
                     attempt_id=str(uuid4()), challenge_id=str(uuid4()), platform=self.platform,
                     expected_account=account, password=password, generation=connection_generation, context=context, page=page,
@@ -133,6 +134,8 @@ class NthuSsoMixin:
                     return await self._answer_automatic_captcha(
                         attempt, candidate, image_locator,
                     )
+                if not image:
+                    image = await image_locator.screenshot(timeout=self.timeout_ms)
                 return self._challenge_result(attempt, image)
             except PlaywrightTimeoutError:
                 await context.close()

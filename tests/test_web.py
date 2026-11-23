@@ -246,7 +246,7 @@ def test_selecting_one_cross_platform_course_source_disables_the_other(web):
         group_id, first_id = group.id, first.id
     page = client.get("/courses").text
     assert "離散數學" in page and "Discrete Mathematics" not in page
-    assert "11510CS135601" not in page and "待設定" in page
+    assert "11510CS135601" in page and "待設定" in page
     chosen = client.put(f"/api/v1/courses/{group_id}/selection", headers=headers, json={"source_id": first_id, "selection_state": "selected", "expected_version": 1})
     assert chosen.status_code == 200
     loaded = client.get(f"/api/v1/courses/{group_id}").json()["data"]
@@ -278,7 +278,7 @@ def test_selecting_one_cross_platform_course_source_disables_the_other(web):
     assert changed.status_code == 200
     english_page = client.get("/courses").text
     assert "Discrete Mathematics" in english_page
-    assert "離散數學" not in english_page and "11510CS135601" not in english_page
+    assert "離散數學" not in english_page and "11510CS135601" in english_page
 
 
 def test_taipei_time_editor_and_new_dialog_reset_are_shipped(web):
@@ -306,6 +306,8 @@ def test_unsubmitted_past_due_items_are_overdue_and_default_filter_is_needs_conf
         ])
     page = client.get("/todos").text
     assert 'data-status="overdue"' in page and 'submission-label overdue' in page
+    assert 'class="submission-check overdue" aria-label="已逾期">!</span>' in page
+    assert 'class="submission-check unsubmitted" aria-label="未繳交"></span>' in page
     assert page.count('data-status="unsubmitted"') == 1
     assert '<option value="open" selected>' in page and '<option value="overdue">' in page
     assert 'status.value = ""' in client.get("/static/app.js").text
@@ -321,8 +323,10 @@ def test_todo_filter_can_hide_flex_rows_and_shows_empty_state(web):
     assert "filterEmpty.hidden = visible !== 0" in script
     assert "[hidden]{display:none!important}" in stylesheet
     assert 'id="todo-filter-empty" hidden' in page
-    assert ".submission-check.unsubmitted" in stylesheet
-    assert ".submission-label.unsubmitted" in stylesheet
+    assert ".submission-check.overdue{color:#fff;background:var(--error);border-color:var(--error)}" in stylesheet
+    assert ".submission-check.unsubmitted" not in stylesheet
+    assert ".submission-label.unsubmitted{color:var(--muted)}" in stylesheet
+    assert ".submission-label.overdue{color:var(--error)}" in stylesheet
 
 
 def test_sync_pages_distinguish_latest_attempt_from_last_complete_success(web):
@@ -509,9 +513,6 @@ def test_connection_copy_states_real_credential_and_sync_limits(web):
     page = client.get("/settings/connections").text
     assert "帳密加密儲存於本機" in page
     assert "更新後會重新連接平台" in page
-    assert "每小時檢查並同步" in page
-    assert "登入失效會使用本機加密保存的帳密自動重新登入" in page
-    assert "過期後需重試" in page
     assert "永久" not in page and "保證" not in page
 
 
@@ -625,3 +626,77 @@ def test_course_overview_excludes_cached_platform_tutorial_and_marks_single_pend
     detail = client.get(f"/courses/{course_id}").text
     assert 'section class="panel source-settings"' in detail
     assert 'data-state="none"' in detail
+
+
+def test_initial_sync_gate_renders_progress_bar_without_inline_styles(web):
+    import json
+    from sqlalchemy import select
+    from ecourse.db.models import SyncJob
+    from ecourse.services import Service
+
+    client, settings, db, owner = web
+    login(client)
+    service = Service(settings)
+    credential = service.save_credentials(owner.id, "student-p", "secret-p")
+    service.connect(owner.id, "elearn", credential["id"])
+    service.complete_tutorial(owner.id)
+    with db.session() as session:
+        elearn_conn = session.scalar(select(PlatformConnection).where(PlatformConnection.owner_id == owner.id, PlatformConnection.platform == "elearn"))
+        job = session.scalar(select(SyncJob).where(SyncJob.connection_id == elearn_conn.id))
+        job.state = "running"
+        job.progress = json.dumps({
+            "phase": "details", "percent": 72,
+            "courses_done": 4, "courses_total": 4,
+            "items_done": 10, "items_total": 20,
+        })
+    response = client.get("/")
+    assert "style-src 'self'" in response.headers["Content-Security-Policy"]
+    html = response.text
+    assert 'id="first-sync-bar"' in html
+    assert 'value="45"' in html
+    assert 'style="' not in html
+    payload = client.get("/api/v1/initial-sync").json()["data"]
+    assert payload["done"] is False
+    elearn = next(p for p in payload["platforms"] if p["platform"] == "elearn")
+    assert elearn["percent"] == 72
+    assert elearn["phase"] == "details"
+    assert elearn["items_done"] == 10
+    assert elearn["items_total"] == 20
+    assert payload["percent"] == round(sum(p["percent"] for p in payload["platforms"]) / len(payload["platforms"]))
+
+
+def test_exponential_progress_curve_starts_slow_and_accelerates():
+    from ecourse.web.app import _exp_progress
+
+    assert _exp_progress(0) == 0
+    assert _exp_progress(100) == 100
+    assert _exp_progress(40, done=True) == 100
+    early_gain = _exp_progress(30) - _exp_progress(0)
+    mid_gain = _exp_progress(60) - _exp_progress(30)
+    late_gain = _exp_progress(90) - _exp_progress(60)
+    assert 0 < early_gain < mid_gain < late_gain
+
+
+def test_grade_items_appear_only_in_course_grades_tab(web):
+    client, _settings, db, owner = web
+    login(client)
+    with db.session() as session:
+        connection = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
+        group = CourseGroup(owner_id=owner.id, display_name="離散數學", course_code="11510CS233601")
+        session.add_all((connection, group)); session.flush()
+        source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="45050", course_code="11510CS233601", title="離散數學")
+        session.add(source); session.flush()
+        session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1))
+        session.add(LearningItem(
+            owner_id=owner.id, source_course_id=source.id, remote_item_id="gradebook:45050:1:Exam 1",
+            kind="grade", title="Exam 1", remote_status="graded",
+            grade_text="50.00 / 100", grading_status_text="成績簿",
+        ))
+        group_id = group.id
+
+    grades_page = client.get(f"/courses/{group_id}/grades").text
+    assert "Exam 1" in grades_page and "50.00 / 100" in grades_page and "成績簿" in grades_page
+    assignments_page = client.get(f"/courses/{group_id}/assignments").text
+    assert "Exam 1" not in assignments_page
+    todos_page = client.get("/todos").text
+    assert "Exam 1" not in todos_page

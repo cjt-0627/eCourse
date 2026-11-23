@@ -33,7 +33,7 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
-MAX_CONCURRENT_REQUESTS = 4
+MAX_CONCURRENT_REQUESTS = 8
 MAX_CHALLENGE_RETRIES = 3
 
 
@@ -219,11 +219,14 @@ class ElearnHttp:
             count += 1
         self.usable = count > 0
         self.fingerprint = fingerprint.hexdigest()[:16]
+        self._challenge_lock = asyncio.Lock()
+        self._challenge_epoch = 0
         self._client = httpx.AsyncClient(
             cookies=jar,
             transport=transport,
             timeout=timeout,
             follow_redirects=True,
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=10),
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -249,6 +252,7 @@ class ElearnHttp:
         Transparently solves F5 BIG-IP challenges when encountered.
         """
         self.check_url(url)
+        epoch = self._challenge_epoch
         async with _semaphore():
             try:
                 response = await self._client.get(url)
@@ -272,15 +276,35 @@ class ElearnHttp:
                 raise SessionExpired
             return html, final
 
-        # F5 challenge detected — solve it
-        html = await self._solve_challenge(url, html)
-        final = url  # after solving, the final URL is the originally requested one
+        # F5 challenge detected — serialize solving so concurrent requests share the cookies.
+        async with self._challenge_lock:
+            if self._challenge_epoch != epoch:
+                async with _semaphore():
+                    try:
+                        retry = await self._client.get(url)
+                    except httpx.TimeoutException as exc:
+                        raise UpstreamTimeout from exc
+                    except httpx.HTTPError as exc:
+                        raise NeedsBrowser from exc
+                retry_final = str(retry.url)
+                retry_parsed = urlparse(retry_final)
+                if retry_parsed.hostname == SSO_HOST or "/login/" in retry_parsed.path:
+                    raise SessionExpired
+                if retry_parsed.hostname not in ALLOWED_HOSTS or retry_parsed.hostname != ELEARN_HOST:
+                    raise NeedsBrowser
+                if retry.status_code == 200 and not is_challenge_page(retry.text):
+                    if _is_session_expired_page(retry.text, retry_final):
+                        raise SessionExpired
+                    return retry.text, retry_final
+                html = retry.text
+            html, final = await self._solve_challenge(url, html)
+            self._challenge_epoch += 1
         if _is_session_expired_page(html, final):
             raise SessionExpired
         return html, final
 
-    async def _solve_challenge(self, url: str, challenge_html: str) -> str:
-        """Solve the F5 BIG-IP challenge and return the real page HTML."""
+    async def _solve_challenge(self, url: str, challenge_html: str) -> tuple[str, str]:
+        """Solve the F5 BIG-IP challenge and return the real page HTML and final URL."""
         base_origin = re.match(r"https?://[^/]+", url).group(0)
         loop = asyncio.get_running_loop()
 
@@ -297,26 +321,23 @@ class ElearnHttp:
             if not type8_m:
                 raise NeedsBrowser
 
-            # Fetch external challenge scripts
-            async with _semaphore():
-                try:
-                    type8_resp = await self._client.get(
-                        base_origin + type8_m.group(1),
-                    )
-                    type8_js = type8_resp.text
-                except (httpx.TimeoutException, httpx.HTTPError):
-                    raise NeedsBrowser
-
-            type12_js = ""
-            if type12_m:
+            # Fetch external challenge scripts concurrently when both are present.
+            async def _fetch_script(path: str) -> str:
                 async with _semaphore():
                     try:
-                        type12_resp = await self._client.get(
-                            base_origin + type12_m.group(1),
-                        )
-                        type12_js = type12_resp.text
+                        resp = await self._client.get(base_origin + path)
+                        return resp.text
                     except (httpx.TimeoutException, httpx.HTTPError):
                         raise NeedsBrowser
+
+            if type12_m:
+                type8_js, type12_js = await asyncio.gather(
+                    _fetch_script(type8_m.group(1)),
+                    _fetch_script(type12_m.group(1)),
+                )
+            else:
+                type8_js = await _fetch_script(type8_m.group(1))
+                type12_js = ""
 
             # Phase 1: run scripts in Duktape (CPU-bound, offload to thread)
             try:
@@ -372,9 +393,14 @@ class ElearnHttp:
                 except httpx.HTTPError as exc:
                     raise NeedsBrowser from exc
 
+            final = str(response.url)
+            final_parsed = urlparse(final)
+            if final_parsed.hostname == SSO_HOST or "/login/" in final_parsed.path:
+                raise SessionExpired
             html = response.text
             if not is_challenge_page(html):
-                return html
+                return html, final
+            challenge_html = html
 
         # Exhausted retries
         raise NeedsBrowser
