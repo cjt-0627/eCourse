@@ -700,3 +700,115 @@ def test_grade_items_appear_only_in_course_grades_tab(web):
     assert "Exam 1" not in assignments_page
     todos_page = client.get("/todos").text
     assert "Exam 1" not in todos_page
+
+
+def test_todos_initial_ssr_filtering_matches_client_defaults(web):
+    client, _settings, db, owner = web
+    login(client)
+    with db.session() as session:
+        connection = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
+        group = CourseGroup(owner_id=owner.id, display_name="離散數學", course_code="11510CS233601")
+        other_group = CourseGroup(owner_id=owner.id, display_name="線性代數", course_code="11510MATH10100")
+        session.add_all((connection, group, other_group)); session.flush()
+        source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="c-1", title="離散數學")
+        other_source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="c-2", title="線性代數")
+        session.add_all((source, other_source)); session.flush()
+        session.add_all([
+            CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1),
+            CourseSelection(owner_id=owner.id, group_id=other_group.id, source_id=other_source.id, selection_state="selected", preference_version=1),
+        ])
+        open_item = LearningItem(
+            owner_id=owner.id, source_course_id=source.id, remote_item_id="i-open",
+            kind="assignment", title="開放作業", due_at=datetime(2099, 1, 1, tzinfo=UTC),
+            date_precision="exact", remote_status="not_submitted",
+        )
+        overdue_item = LearningItem(
+            owner_id=owner.id, source_course_id=source.id, remote_item_id="i-late",
+            kind="assignment", title="逾期作業", due_at=datetime(2020, 1, 1, tzinfo=UTC),
+            date_precision="exact", remote_status="not_submitted",
+        )
+        submitted_item = LearningItem(
+            owner_id=owner.id, source_course_id=source.id, remote_item_id="i-done",
+            kind="assignment", title="已繳作業", due_at=datetime(2099, 1, 1, tzinfo=UTC),
+            date_precision="exact", remote_status="submitted",
+        )
+        other_course_item = LearningItem(
+            owner_id=owner.id, source_course_id=other_source.id, remote_item_id="i-other",
+            kind="assignment", title="別科作業", due_at=datetime(2099, 1, 1, tzinfo=UTC),
+            date_precision="exact", remote_status="not_submitted",
+        )
+        session.add_all([overdue_item, submitted_item, open_item, other_course_item])
+        session.flush()
+        group_id = group.id
+        open_item_id = open_item.id
+        other_item_id = other_course_item.id
+
+    page = client.get("/todos").text
+    articles = re.findall(r'<article class="row todo[^"]*"[^>]*>', page)
+    by_status = {}
+    for tag in articles:
+        status = re.search(r'data-status="([^"]+)"', tag).group(1)
+        by_status.setdefault(status, []).append(tag)
+
+    assert all(" hidden" in tag for tag in by_status["overdue"])
+    assert all(" hidden" in tag for tag in by_status["submitted"])
+    assert all(" hidden" not in tag for tag in by_status["unsubmitted"])
+    assert sum("first-visible" in tag for tag in articles) == 1
+    assert "first-visible" in by_status["unsubmitted"][0]
+    assert 'id="todo-filter-empty" hidden>' in page
+
+    filtered = client.get(f"/todos?course={group_id}").text
+    assert f'<option value="{group_id}" selected>' in filtered
+    assert '<option value="" selected>' in filtered
+    filtered_articles = re.findall(r'<article class="row todo[^"]*"[^>]*>', filtered)
+    for tag in filtered_articles:
+        course_attr = re.search(r'data-course="([^"]*)"', tag).group(1)
+        if course_attr == group_id:
+            assert " hidden" not in tag
+        else:
+            assert " hidden" in tag
+
+    with db.session() as session:
+        session.get(LearningItem, open_item_id).remote_status = "submitted"
+        session.get(LearningItem, other_item_id).remote_status = "submitted"
+
+    empty_open = client.get("/todos").text
+    assert 'id="todo-filter-empty">' in empty_open
+    assert 'id="todo-filter-empty" hidden' not in empty_open
+
+
+def test_courses_ssr_applies_persisted_order_cookie(web):
+    import json
+    from urllib.parse import quote
+
+    client, _settings, db, owner = web
+    login(client)
+    ids = {}
+    with db.session() as session:
+        connection = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
+        session.add(connection); session.flush()
+        for name in ("Alpha", "Beta", "Gamma"):
+            group = CourseGroup(owner_id=owner.id, display_name=name)
+            source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id=name, title=name)
+            session.add_all((group, source)); session.flush()
+            session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1))
+            ids[name] = group.id
+
+    default_page = client.get("/courses").text
+    assert default_page.index(ids["Alpha"]) < default_page.index(ids["Beta"]) < default_page.index(ids["Gamma"])
+
+    ordered_cookie = quote(json.dumps({"owner": owner.id, "ids": [ids["Gamma"], ids["Alpha"], ids["Beta"]]}))
+    client.cookies.set("ecourse_course_order", ordered_cookie, path="/courses")
+    ordered_page = client.get("/courses").text
+    assert ordered_page.index(ids["Gamma"]) < ordered_page.index(ids["Alpha"]) < ordered_page.index(ids["Beta"])
+
+    other_owner_cookie = quote(json.dumps({"owner": "other-owner", "ids": [ids["Gamma"], ids["Beta"], ids["Alpha"]]}))
+    client.cookies.set("ecourse_course_order", other_owner_cookie, path="/courses")
+    other_owner_page = client.get("/courses")
+    assert other_owner_page.status_code == 200
+    assert other_owner_page.text.index(ids["Alpha"]) < other_owner_page.text.index(ids["Beta"]) < other_owner_page.text.index(ids["Gamma"])
+
+    client.cookies.set("ecourse_course_order", "not-valid-json{", path="/courses")
+    invalid_page = client.get("/courses")
+    assert invalid_page.status_code == 200
+    assert invalid_page.text.index(ids["Alpha"]) < invalid_page.text.index(ids["Beta"]) < invalid_page.text.index(ids["Gamma"])

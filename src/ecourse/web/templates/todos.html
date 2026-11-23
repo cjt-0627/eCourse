@@ -3,12 +3,12 @@
 {% block content %}
 <div class="toolbar">
   <label>{{ t('搜尋') }}<input id="todo-search" placeholder="{{ t('標題或課程') }}"></label>
-  <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}">{{ course_name(course.get('display_name'), course.get('course_code')) }}</option>{% endfor %}</select></label>
-  <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="open" selected>{{ t('待處理') }}</option><option value="overdue">{{ t('已逾期') }}</option><option value="submitted">{{ t('已繳交') }}</option><option value="">{{ t('全部') }}</option></select></label>
+  <label>{{ t('課程') }}<select id="todo-course"><option value="">{{ t('全部課程') }}</option>{% for course in data.get('courses',[]) %}<option value="{{ course.get('id') }}"{{ ' selected' if data.get('initial_course') == course.get('id') }}>{{ course_name(course.get('display_name'), course.get('course_code')) }}</option>{% endfor %}</select></label>
+  <label>{{ t('繳交狀態') }}<select id="todo-status"><option value="open"{{ ' selected' if data.get('initial_status', 'open') == 'open' }}>{{ t('待處理') }}</option><option value="overdue"{{ ' selected' if data.get('initial_status') == 'overdue' }}>{{ t('已逾期') }}</option><option value="submitted"{{ ' selected' if data.get('initial_status') == 'submitted' }}>{{ t('已繳交') }}</option><option value=""{{ ' selected' if data.get('initial_status') == '' }}>{{ t('全部') }}</option></select></label>
 </div>
 <section class="panel" id="todo-list">
 {% for item in data.get('items',[]) %}
-  <article class="row todo" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ course_name(item.get('course_name')) }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}">
+  <article class="row todo{{ ' first-visible' if item.get('initial_first_visible') }}" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ course_name(item.get('course_name')) }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}"{{ ' hidden' if item.get('initial_hidden') }}>
     <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('已逾期') if item.get('submission_state') == 'overdue' else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認'))) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') == 'overdue' else '') }}</span>
     <div class="todo-main">
       <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
@@ -30,7 +30,7 @@
 {% else %}
   <div class="empty"><p>{{ t('目前沒有待辦。') }}</p></div>
 {% endfor %}
-  <div class="empty" id="todo-filter-empty" hidden><p>{{ t('沒有符合目前篩選條件的待辦。') }}</p></div>
+  <div class="empty" id="todo-filter-empty"{{ ' hidden' if not data.get('initial_filter_empty') }}><p>{{ t('沒有符合目前篩選條件的待辦。') }}</p></div>
 </section>
 <dialog id="event-dialog">
   <form id="event-form">
