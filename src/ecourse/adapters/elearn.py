@@ -10,8 +10,8 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from playwright.async_api import Browser, Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError
 
-from ecourse.parsing.dates import parse_nthu_date
-from ecourse.parsing.html import parse_course_content, parse_courses, parse_moodle_forum_pages
+from ecourse.parsing.dates import is_current_nthu_course_code, parse_nthu_date
+from ecourse.parsing.html import parse_course_content, parse_courses, parse_elearn_gradebook, parse_moodle_forum_pages
 
 from .base import AdapterStatus, CaptchaSolver, CourseItem, FetchResult, ItemDetail, SessionVerification
 from .elearn_http import ElearnHttp, NeedsBrowser, SessionExpired, UpstreamTimeout
@@ -240,6 +240,7 @@ class ElearnAdapter(NthuSsoMixin):
                         await detail_page.close()
 
             courses = tuple(await asyncio.gather(*(_enrich_meta(course) for course in courses)))
+            courses = tuple(course for course in courses if is_current_nthu_course_code(course.course_code))
             return FetchResult(courses, ("course_catalog",), True)
         except PlaywrightTimeoutError:
             return FetchResult((), (), False, ("upstream_timeout",))
@@ -310,15 +311,7 @@ class ElearnAdapter(NthuSsoMixin):
                 root_warning = ("course_root_unrecognized",)
             else:
                 root_warning = ()
-            forum_containers = page.locator("a[href*='/mod/forum/view.php']")
-            forum_urls: list[str] = []
-            for index in range(await forum_containers.count()):
-                href = await forum_containers.nth(index).get_attribute("href")
-                url = urljoin(page.url, href or "")
-                parsed = urlparse(url)
-                if parsed.scheme == "https" and parsed.hostname == "elearn.nthu.edu.tw" and parsed.path == "/mod/forum/view.php" and parse_qs(parsed.query).get("id", [None])[0]:
-                    if url not in forum_urls:
-                        forum_urls.append(url)
+            forum_urls = _course_forum_urls(course_html, page.url)
             items = {(item.kind, item.remote_id): item for item in content.items}
             forum_limit_exceeded = len(forum_urls) > self.max_forum_containers
             complete = not forum_limit_exceeded
@@ -327,15 +320,20 @@ class ElearnAdapter(NthuSsoMixin):
             if forum_limit_exceeded:
                 warnings.append("elearn_forum_container_limit")
             await page.close()
-            forum_results = await asyncio.gather(
-                *(self._fetch_forum_discussions(context, forum_url, remote_course_id)
-                  for forum_url in forum_urls[: self.max_forum_containers])
+            forum_results, gradebook_items = await asyncio.gather(
+                asyncio.gather(
+                    *(self._fetch_forum_discussions(context, forum_url, remote_course_id)
+                      for forum_url in forum_urls[: self.max_forum_containers])
+                ),
+                self._fetch_gradebook_browser(context, remote_course_id),
             )
             for forum_complete, forum_items, forum_warnings in forum_results:
                 complete = complete and forum_complete
                 warnings.extend(forum_warnings)
                 for item in forum_items:
                     items[(item.kind, item.remote_id)] = item
+            for item in gradebook_items:
+                items[(item.kind, item.remote_id)] = item
             return FetchResult(
                 tuple(items.values()), ("assignments", "quizzes", "announcements", "materials"),
                 complete, tuple(dict.fromkeys(warnings)),
@@ -393,6 +391,26 @@ class ElearnAdapter(NthuSsoMixin):
                 complete = False
                 warnings.append("elearn_forum_page_limit")
             return complete, tuple(items.values()), tuple(warnings)
+        finally:
+            await page.close()
+
+    async def _fetch_gradebook_browser(self, context, remote_course_id: str) -> tuple[CourseItem, ...]:
+        page = await context.new_page()
+        page.set_default_timeout(self.timeout_ms)
+        try:
+            await self._goto(page, f"https://elearn.nthu.edu.tw/grade/report/user/index.php?id={remote_course_id}")
+            if await _page_session_expired(page):
+                return ()
+            try:
+                await page.wait_for_selector(
+                    "#region-main table, #region-main .alert",
+                    timeout=min(self.timeout_ms, 8_000),
+                )
+            except PlaywrightTimeoutError:
+                pass
+            return parse_elearn_gradebook(await page.content(), page.url, remote_course_id)
+        except (PlaywrightError, PlaywrightTimeoutError, ValueError):
+            return ()
         finally:
             await page.close()
 
@@ -498,6 +516,7 @@ class ElearnAdapter(NthuSsoMixin):
                     if " ".join(node.get_text().split()).casefold() in known:
                         return FetchResult((), ("course_catalog",), True)
                 raise NeedsBrowser
+        courses = tuple(course for course in courses if is_current_nthu_course_code(course.course_code))
         return FetchResult(courses, ("course_catalog",), True)
 
     async def _fetch_course_http(self, http: ElearnHttp, remote_course_id: str) -> FetchResult:
@@ -522,20 +541,7 @@ class ElearnAdapter(NthuSsoMixin):
         if course_root is None:
             warnings.append("course_root_unrecognized")
         items = {(item.kind, item.remote_id): item for item in content.items}
-        forum_links = soup.select("a[href*='/mod/forum/view.php']")
-        forum_urls: list[str] = []
-        for link in forum_links:
-            href = str(link.get("href") or "")
-            url = urljoin(final, href)
-            parsed = urlparse(url)
-            if (
-                parsed.scheme == "https"
-                and parsed.hostname == "elearn.nthu.edu.tw"
-                and parsed.path == "/mod/forum/view.php"
-                and parse_qs(parsed.query).get("id", [None])[0]
-            ):
-                if url not in forum_urls:
-                    forum_urls.append(url)
+        forum_urls = _course_forum_urls(html, final)
         forum_limit_exceeded = len(forum_urls) > self.max_forum_containers
         complete = not forum_limit_exceeded and not warnings
         if forum_limit_exceeded:
@@ -549,6 +555,16 @@ class ElearnAdapter(NthuSsoMixin):
             warnings.extend(forum_warnings)
             for item in forum_items:
                 items[(item.kind, item.remote_id)] = item
+        try:
+            gradebook_html, gradebook_final = await http.get_text(
+                f"https://elearn.nthu.edu.tw/grade/report/user/index.php?id={remote_course_id}"
+            )
+        except (SessionExpired, UpstreamTimeout, NeedsBrowser, ValueError):
+            gradebook_items = ()
+        else:
+            gradebook_items = parse_elearn_gradebook(gradebook_html, gradebook_final, remote_course_id)
+        for item in gradebook_items:
+            items[(item.kind, item.remote_id)] = item
         return FetchResult(
             tuple(items.values()), ("assignments", "quizzes", "announcements", "materials"),
             complete, tuple(dict.fromkeys(warnings)),
@@ -654,6 +670,29 @@ class ElearnAdapter(NthuSsoMixin):
             complete = False
             warnings.append("elearn_forum_page_limit")
         return complete, tuple(items.values()), tuple(warnings)
+
+
+def _course_forum_urls(html: str, base_url: str) -> list[str]:
+    """Extract course-scoped Moodle forum links, excluding global help overlays."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.select_one("#region-main, main[role='main'], .course-content, [data-region='course-content']") or soup
+    forum_urls: list[str] = []
+    for link in root.select("a[href*='/mod/forum/view.php']"):
+        if link.find_parent(class_="overlaylist") or link.find_parent(("header", "footer", "nav")):
+            continue
+        href = str(link.get("href") or "")
+        url = urljoin(base_url, href)
+        parsed = urlparse(url)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname == "elearn.nthu.edu.tw"
+            and parsed.path == "/mod/forum/view.php"
+            and parse_qs(parsed.query).get("id", [None])[0]
+        ):
+            if url not in forum_urls:
+                forum_urls.append(url)
+    return forum_urls
 
 
 def _is_truncated_title(title: str) -> bool:

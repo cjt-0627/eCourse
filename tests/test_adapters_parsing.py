@@ -363,3 +363,136 @@ def test_eeclass_empty_bulletin_page_does_not_turn_navigation_into_announcements
         '<div id="fs-content">目前沒有公告</div>'
     )
     assert parse_eeclass_activity_page(html, "https://eeclass.nthu.edu.tw/course/bulletin/101", "101", "announcement") == ()
+
+
+def test_nthu_current_semester_course_code_and_window_filtering():
+    from datetime import date, datetime, timezone
+    from ecourse.parsing.dates import current_nthu_terms, is_current_nthu_course_code, is_within_current_nthu_term
+
+    fall_day = date(2026, 11, 23)
+    assert current_nthu_terms(fall_day) == ("11510",)
+    assert is_current_nthu_course_code("11510CS233601", fall_day) is True
+    assert is_current_nthu_course_code("11420CS135501", fall_day) is False
+    assert is_current_nthu_course_code(None, fall_day) is False
+    assert is_within_current_nthu_term(datetime(2026, 9, 6, tzinfo=timezone.utc), fall_day) is True
+    assert is_within_current_nthu_term(datetime(2027, 1, 15, tzinfo=timezone.utc), fall_day) is True
+    assert is_within_current_nthu_term(datetime(2025, 3, 7, tzinfo=timezone.utc), fall_day) is False
+    assert is_within_current_nthu_term(datetime(2026, 5, 1, tzinfo=timezone.utc), fall_day) is False
+    assert is_within_current_nthu_term(None, fall_day) is True
+
+    spring_day = date(2027, 3, 15)
+    assert current_nthu_terms(spring_day) == ("11520",)
+    assert is_current_nthu_course_code("11520CS233601", spring_day) is True
+    assert is_current_nthu_course_code("11510CS233601", spring_day) is False
+
+
+def test_elearn_forum_urls_exclude_global_overlay_and_index_links():
+    from ecourse.adapters.elearn import _course_forum_urls
+
+    html = (
+        '<header><div class="overlaylist"><a href="/mod/forum/view.php?id=999">平台操作FAQ</a></div></header>'
+        '<div id="region-main">'
+        '<a href="/mod/forum/view.php?id=101">課程公告</a>'
+        '<a href="/mod/assign/index.php?id=45050">作業</a>'
+        '<a href="/mod/quiz/index.php?id=45050">測驗卷</a>'
+        '<a href="/mod/assign/view.php?id=8001">Assignment 1</a>'
+        '</div>'
+    )
+    assert _course_forum_urls(html, "https://elearn.nthu.edu.tw/course/view.php?id=45050") == [
+        "https://elearn.nthu.edu.tw/mod/forum/view.php?id=101"
+    ]
+    parsed = parse_course_content(html, "https://elearn.nthu.edu.tw/course/view.php?id=45050", "elearn", "45050")
+    assert [(item.kind, item.remote_id, item.title) for item in parsed.items] == [
+        ("assignment", "8001", "Assignment 1")
+    ]
+
+
+def test_parse_elearn_gradebook_extracts_manual_exam_items_only():
+    from ecourse.parsing.html import parse_elearn_gradebook
+
+    html = """
+    <div id="region-main">
+      <table class="user-grade">
+        <tbody>
+          <tr class="cat_1 spacer"><td class="level1 category column-itemname"></td></tr>
+          <tr>
+            <th class="level2 category column-itemname"><a href="#">Exam</a></th>
+            <td class="column-grade"></td>
+          </tr>
+          <tr>
+            <th class="level3 item column-itemname"><a href="https://elearn.nthu.edu.tw/mod/assign/view.php?id=242296">作業 Assignment 1</a></th>
+            <td class="column-grade">84.00</td>
+            <td class="column-range">0–100</td>
+          </tr>
+          <tr>
+            <th class="level3 item column-itemname"><a href="https://elearn.nthu.edu.tw/mod/quiz/view.php?id=242999">測驗 Quiz A</a></th>
+            <td class="column-grade">90.00</td>
+            <td class="column-range">0–100</td>
+          </tr>
+          <tr>
+            <th class="level2 item column-itemname">手動項目 Presentation</th>
+            <td class="column-grade">100.00</td>
+            <td class="column-range">0–200</td>
+          </tr>
+          <tr>
+            <th class="level3 item column-itemname">手動項目 Exam 1</th>
+            <td class="column-grade">50.00</td>
+            <td class="column-range">0–100</td>
+          </tr>
+          <tr>
+            <th class="level3 item column-itemname">手動項目 Take-Home Exam</th>
+            <td class="column-grade">-</td>
+            <td class="column-range">0–100</td>
+          </tr>
+          <tr class="lastrow">
+            <th class="level1 baggt column-itemname">彙總 課程總分</th>
+            <td class="column-grade">75.00</td>
+            <td class="column-range">0–100</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    """
+    items = parse_elearn_gradebook(html, "https://elearn.nthu.edu.tw/grade/report/user/index.php?id=45050", "45050")
+    assert [(i.kind, i.title, i.grade_text, i.grading_status_text) for i in items] == [
+        ("grade", "Presentation", "100.00 / 200", "成績簿"),
+        ("grade", "Exam 1", "50.00 / 100", "成績簿"),
+    ]
+
+
+def test_parse_eeclass_score_page_extracts_published_scores():
+    from ecourse.parsing.html import parse_eeclass_score_page
+
+    html = """
+    <div id="fs-content">
+      <table>
+        <thead>
+          <tr>
+            <th>姓名</th>
+            <th>作業1 (0%)</th>
+            <th>作業2 (0%)</th>
+            <th>Lab1 (4%)</th>
+            <th>Midterm (15%)</th>
+            <th>Final (20%)</th>
+            <th>等級</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>陳靖婷 115062113</td>
+            <td>-</td>
+            <td>不開放</td>
+            <td>100</td>
+            <td>100</td>
+            <td>尚未批改</td>
+            <td>E</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    """
+    items = parse_eeclass_score_page(html, "https://eeclass.nthu.edu.tw/course/score/33843", "33843")
+    assert [(i.kind, i.title, i.grade_text, i.grading_status_text) for i in items] == [
+        ("grade", "Lab1 (4%)", "100", "成績計算"),
+        ("grade", "Midterm (15%)", "100", "成績計算"),
+    ]

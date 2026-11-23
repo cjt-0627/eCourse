@@ -20,6 +20,7 @@ from ecourse.db import models as m
 from ecourse.services import Service
 from ecourse.vault import Vault
 from ecourse.ipc import IPCError, WorkerIPCServer, ipc_socket_path
+from ecourse.parsing.dates import is_within_current_nthu_term
 from ecourse.parsing.html import normalize_course_code, parse_eeclass_bulletin_date
 from ecourse.platforms import managed_platform_url
 from ecourse.adapters.base import CourseItem
@@ -510,7 +511,7 @@ class Worker:
         for source in prepared:
             for item_ref in source["records"]:
                 item_kind = getattr(item_ref, "kind", None)
-                if item_kind == "material":
+                if item_kind in {"material", "grade"}:
                     continue
                 if not has_detail_fetcher:
                     passthrough_results.append((
@@ -661,6 +662,10 @@ class Worker:
                 kind = value.get("kind", "assignment")
                 if kind == "announcement":
                     announcement = session.scalar(select(m.Announcement).where(m.Announcement.source_course_id == source_id, m.Announcement.remote_id == remote_id))
+                    if connection.platform == "elearn" and not is_within_current_nthu_term(detail.get("published_at"), self.clock()):
+                        if announcement is not None:
+                            session.delete(announcement)
+                        continue
                     if announcement is None:
                         announcement = m.Announcement(owner_id=connection.owner_id, source_course_id=source_id, remote_id=remote_id, title=value["title"])
                         session.add(announcement)
@@ -691,10 +696,17 @@ class Worker:
                     material.source_url = value.get("source_url", value.get("url"))
                     material.last_seen_at = self.clock()
                     continue
-                if kind not in {"assignment", "quiz"}:
+                if kind not in {"assignment", "quiz", "grade"}:
                     continue
                 item = session.scalar(select(m.LearningItem).where(m.LearningItem.source_course_id == source_id, m.LearningItem.kind == kind, m.LearningItem.remote_item_id == remote_id))
                 due_at, due_date, closes_at = value.get("due_at"), value.get("due_date"), value.get("closes_at")
+                if connection.platform == "elearn" and not all(
+                    is_within_current_nthu_term(moment, self.clock())
+                    for moment in (due_at, due_date, closes_at)
+                ):
+                    if item is not None:
+                        session.delete(item)
+                    continue
                 if item is None:
                     item = m.LearningItem(owner_id=connection.owner_id, source_course_id=source_id, remote_item_id=remote_id, kind=kind, title=value["title"])
                     session.add(item)
