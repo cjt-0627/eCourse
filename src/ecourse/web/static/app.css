@@ -87,8 +87,10 @@ dialog{width:min(520px,calc(100% - 2rem));border:1px solid var(--line);border-ra
 .course-grid .course-tile{position:relative;padding:0;border-radius:15px;min-width:0;transition:border-color .15s,box-shadow .15s}
 .course-tile:hover,.course-tile:focus-within{border-color:var(--focus)}
 .course-tile-link{display:block;padding:1rem;text-decoration:none;color:var(--ink);border-radius:15px;min-height:135px}
-.course-tile-link h2{font-size:1rem;line-height:1.45;margin:.35rem 0 .65rem;overflow-wrap:anywhere}
-.course-code{font-size:.7rem;color:var(--muted);overflow-wrap:anywhere;display:block}
+.course-tile-link h2{font-size:1rem;line-height:1.45;margin:.2rem 0 .7rem;overflow-wrap:anywhere}
+.course-code{overflow-wrap:anywhere}
+.course-facts{display:grid;gap:.25rem;margin:0 0 .55rem;font-size:.78rem;line-height:1.45;color:var(--muted)}
+.course-facts div{display:flex;gap:.45rem;min-width:0}.course-facts dt{flex:none;font-weight:500}.course-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .course-meta{display:flex;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--muted)}
 .course-tile-link:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .course-grid .needs-selection{border-color:var(--warn);background:var(--warning-bg)}
@@ -102,7 +104,7 @@ dialog{width:min(520px,calc(100% - 2rem));border:1px solid var(--line);border-ra
 @media(max-width:540px){.course-toolbar{display:block}.course-toolbar>span{display:block;margin-top:.4rem}.course-grid{gap:1rem}.course-platform-cards,.course-platform-disabled .course-platform-cards{grid-template-columns:1fr;gap:.65rem}.course-tile-link{padding:.85rem;min-height:145px}.course-tile-link h2{font-size:.9rem}.source-settings .source-options{grid-template-columns:1fr}.source-settings .source-option{min-height:60px}}
 @media(prefers-reduced-motion:reduce){.course-grid .course-tile{transition:none}}
 
-.course-tile-link h2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-height:2.9em}
+.course-tile-link h2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 
 /* Course navigation is a set of independent pages, with an explicit current page. */
 .course-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));overflow:visible;gap:.4rem;padding:.35rem;border:1px solid var(--line);border-radius:14px;background:var(--soft)}
