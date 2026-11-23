@@ -539,6 +539,7 @@ class Service:
         """Return everything a user needs to browse one course in eCourse."""
         course = self.get_course(owner_id, group_id)
         items = self.list_items(owner_id, {"course": group_id, "limit": 100})
+        all_items = self.list_items(owner_id, {"course": group_id, "limit": 200, "include_grades": True})
         with self.db.session() as session:
             materials = session.execute(
                 select(m.CourseMaterial, m.PlatformConnection)
@@ -571,7 +572,7 @@ class Service:
             for material, connection in materials
         ]
         course["items"] = items
-        course["grades"] = [item for item in items if item.get("grade_text") or item.get("grading_status_text")]
+        course["grades"] = [item for item in all_items if item.get("grade_text") or item.get("grading_status_text")]
         course["announcements"] = [
             {**_dict(row, exclude=("owner_id", "source_course_id")), "platform": connection.platform}
             for row, connection in announcements
@@ -632,6 +633,8 @@ class Service:
             )
             if filters.get("kind") or filters.get("type"):
                 query = query.where(m.LearningItem.kind == (filters.get("kind") or filters["type"]))
+            elif not filters.get("include_grades"):
+                query = query.where(m.LearningItem.kind != "grade")
             if filters.get("status"):
                 query = query.where(m.LearningItem.remote_status == filters["status"])
             if filters.get("course"):

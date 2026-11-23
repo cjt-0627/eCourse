@@ -68,13 +68,33 @@ def test_course_lists_are_fetched_over_http_without_a_browser():
 
     def handler(request):
         seen.append(request)
+        if request.url.path == "/course/score/101":
+            return page("<table><thead><tr><th>姓名</th><th>Midterm (15%)</th><th>等級</th></tr></thead><tbody><tr><td>測試生</td><td>100</td><td>A</td></tr></tbody></table>")
         return httpx.Response(200, text=(FIXTURES / routes[request.url.path]).read_text())
 
     result = asyncio.run(adapter(handler).fetch_course(state(), "101"))
     assert result.complete and set(result.coverage) == {"assignment", "quiz", "announcement", "material"}
-    assert {item.kind for item in result.records} >= {"assignment", "announcement", "material"}
-    assert len(seen) == 4
+    assert {item.kind for item in result.records} >= {"assignment", "announcement", "material", "grade"}
+    assert len(seen) == 5
     assert all(request.headers["cookie"] == "eeclass_session=v1" for request in seen)  # no SSO cookie leaks
+
+
+def test_course_score_403_does_not_fail_course_fetch():
+    routes = {
+        "/course/homeworkList/101": "eeclass_homework_list.html",
+        "/course/examList/101": "eeclass_exam_list.html",
+        "/course/bulletin/101": "eeclass_bulletin_list.html",
+        "/course/material/101": "eeclass_material_list.html",
+    }
+
+    def handler(request):
+        if request.url.path == "/course/score/101":
+            return httpx.Response(403, text="forbidden")
+        return httpx.Response(200, text=(FIXTURES / routes[request.url.path]).read_text())
+
+    result = asyncio.run(adapter(handler).fetch_course(state(), "101"))
+    assert result.complete is True
+    assert set(result.coverage) == {"assignment", "quiz", "announcement", "material"}
 
 
 def test_expired_session_is_reported_without_using_the_browser():

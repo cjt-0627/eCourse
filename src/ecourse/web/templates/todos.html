@@ -9,7 +9,7 @@
 <section class="panel" id="todo-list">
 {% for item in data.get('items',[]) %}
   <article class="row todo" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ course_name(item.get('course_name')) }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}">
-    <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('已逾期') if item.get('submission_state') == 'overdue' else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認'))) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') in ('unsubmitted', 'overdue') else '') }}</span>
+    <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('已逾期') if item.get('submission_state') == 'overdue' else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認'))) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') == 'overdue' else '') }}</span>
     <div class="todo-main">
       <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
       <small>{{ course_name(item.get('course_name')) or t('手動事件') }} · {{ item.get('display_at')|taipei if item.get('display_at') else t('期限未提供') }}</small>
