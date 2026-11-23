@@ -493,15 +493,19 @@ const search = document.querySelector("#todo-search"), status = document.querySe
 const OPEN_TODO_STATES = new Set(["unknown", "manual", "unsubmitted"]);
 function filterTodos() {
   const query = (search?.value || "").trim().toLocaleLowerCase();
+  const todos = document.querySelectorAll(".todo");
   let visible = 0;
-  document.querySelectorAll(".todo").forEach(element => {
+  todos.forEach(element => {
     const matches = element.dataset.search.toLocaleLowerCase().includes(query) && (!status?.value || (status.value === "open" ? OPEN_TODO_STATES.has(element.dataset.status) : element.dataset.status === status.value)) && (!course?.value || element.dataset.course === course.value);
     element.hidden = !matches;
     // :first-of-type can't see the filter, so mark the first visible row ourselves.
     element.classList.toggle("first-visible", matches && visible === 0);
     if (matches) visible += 1;
   });
-  if (filterEmpty) filterEmpty.hidden = visible !== 0;
+  if (filterEmpty) {
+    if (!todos.length) filterEmpty.hidden = true;
+    else filterEmpty.hidden = visible !== 0;
+  }
 }
 search?.addEventListener("input", filterTodos); status?.addEventListener("change", filterTodos); course?.addEventListener("change", filterTodos);
 const requestedCourse = new URLSearchParams(location.search).get("course");
@@ -519,18 +523,46 @@ if (courseGrid) {
   const key = `ecourse.course-order.v1:${courseGrid.dataset.owner}`;
   const cards = () => [...courseGrid.querySelectorAll('[data-course-id]')];
   const status = document.querySelector('[data-sort-status]');
+  const syncOrderCookie = ids => {
+    try {
+      const encoded = encodeURIComponent(JSON.stringify({owner: courseGrid.dataset.owner, ids}));
+      if (encoded.length <= 3800) {
+        document.cookie = `ecourse_course_order=${encoded}; Path=/courses; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+      }
+    } catch {}
+  };
   try {
     const saved = JSON.parse(localStorage.getItem(key) || '[]');
-    if (Array.isArray(saved)) {
-      const current = new Map(cards().map(card => [card.dataset.courseId, card]));
-      saved.forEach(id => { if (current.has(id)) { const card=current.get(id);courseGrid.querySelector(`[data-course-lane="${CSS.escape(card.dataset.platform)}"]`)?.append(card);current.delete(id); } });
-      current.forEach(card => courseGrid.querySelector(`[data-course-lane="${CSS.escape(card.dataset.platform)}"]`)?.append(card));
+    if (Array.isArray(saved) && saved.length > 0) {
+      syncOrderCookie(saved);
+      const rank = new Map();
+      saved.forEach(id => {
+        if (typeof id === 'string' && !rank.has(id)) rank.set(id, rank.size);
+      });
+      if (rank.size > 0) {
+        courseGrid.querySelectorAll('[data-course-lane]').forEach(lane => {
+          const laneCards = [...lane.querySelectorAll('[data-course-id]')];
+          const desired = laneCards
+            .map((card, index) => ({card, index, id: card.dataset.courseId}))
+            .sort((a, b) => {
+              const ar = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+              const br = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+              return ar !== br ? ar - br : a.index - b.index;
+            })
+            .map(entry => entry.card);
+          if (desired.some((card, i) => card !== laneCards[i])) {
+            desired.forEach(card => lane.append(card));
+          }
+        });
+      }
     }
   } catch {}
   const save = card => {
     const rows = cards();
+    const ids = rows.map(row => row.dataset.courseId);
+    syncOrderCookie(ids);
     try {
-      localStorage.setItem(key, JSON.stringify(rows.map(row => row.dataset.courseId)));
+      localStorage.setItem(key, JSON.stringify(ids));
       status.textContent = locale === 'en' ? `Order saved · ${rows.indexOf(card) + 1} / ${rows.length}` : `排序已儲存 · 第 ${rows.indexOf(card) + 1} / ${rows.length} 門`;
     } catch {
       status.textContent = locale === 'en' ? 'Order changed. Browser storage is unavailable; reloading will reset it.' : '排序已調整，但瀏覽器無法儲存，重新整理後會還原。';

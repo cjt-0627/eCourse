@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import secrets
 import time
@@ -8,7 +9,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -38,6 +39,7 @@ ROOT = Path(__file__).parent
 SESSION_COOKIE = "ecourse_session"
 PRE_CSRF_COOKIE = "ecourse_pre_csrf"
 SCHOOL_AUTH_COOKIE = "ecourse_school_auth"
+COURSE_ORDER_COOKIE = "ecourse_course_order"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 PLATFORMS = {"elearn", "eeclass"}
 SYNC_STATE_LABELS = {
@@ -172,6 +174,36 @@ def _exp_progress(value, done: bool = False) -> int:
     if x >= 1.0:
         return 100
     return min(99, max(1, round((math.expm1(EXP_PROGRESS_K * x) / EXP_PROGRESS_DENOM) * 100)))
+
+
+def _apply_course_order(courses: list[dict], owner_id: str, raw_cookie: str | None) -> list[dict]:
+    """Stably reorder courses according to the owner's persisted cookie order."""
+    if not raw_cookie:
+        return courses
+    try:
+        payload = json.loads(unquote(raw_cookie))
+    except (ValueError, TypeError):
+        return courses
+    if not isinstance(payload, dict) or payload.get("owner") != str(owner_id):
+        return courses
+    ids = payload.get("ids")
+    if not isinstance(ids, list):
+        return courses
+    rank: dict[str, int] = {}
+    for item_id in ids:
+        if isinstance(item_id, str) and item_id not in rank:
+            rank[item_id] = len(rank)
+    if not rank:
+        return courses
+    return [
+        course for _, course in sorted(
+            enumerate(courses),
+            key=lambda pair: (
+                0 if str(pair[1].get("id")) in rank else 1,
+                rank.get(str(pair[1].get("id")), pair[0]),
+            ),
+        )
+    ]
 
 
 def create_app(settings=None) -> FastAPI:
@@ -556,15 +588,15 @@ def create_app(settings=None) -> FastAPI:
             course_info=lambda code: app.state.course_catalog.describe(code, locale),
         ))
 
-    def page(template: str, title: str, active: str, load):
+    def page(template: str, title: str, active: str, load, *, pass_request: bool = False):
         async def endpoint(request: Request):
             auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))
             if auth is None: return RedirectResponse("/login", 303)
-            data = load(auth[0].id)
+            data = load(auth[0].id, request) if pass_request else load(auth[0].id)
             return render(template, title=title, active=active, data=data, auth=auth)
         return endpoint
 
-    def todo_data(owner_id):
+    def todo_data(owner_id, request: Request | None = None):
         synced = service.list_items(owner_id, {"limit": 0})
         completed_states = {"submitted", "graded", "completed", "passed"}
         zone = ZoneInfo("Asia/Taipei")
@@ -594,7 +626,44 @@ def create_app(settings=None) -> FastAPI:
                 item["submission_state"] = "unknown"
         manual = [{**item, "manual": True, "handled": bool(item.get("handled_at")), "due_at": item.get("starts_at")} for item in service.list_manual_events(owner_id)]
         for item in manual: item["display_at"] = item.get("starts_at") or item.get("event_date")
-        return {"items": synced + manual, "courses": service.list_courses(owner_id)}
+        courses = service.list_courses(owner_id)
+        all_items = synced + manual
+        requested_course = (request.query_params.get("course") or "") if request is not None else ""
+        has_deep_link = bool(
+            request is not None and (
+                requested_course
+                or request.query_params.get("item")
+                or request.query_params.get("manual")
+            )
+        )
+        valid_course_ids = {str(c.get("id")) for c in courses if c.get("id") is not None}
+        initial_course = requested_course if requested_course in valid_course_ids else ""
+        initial_status = "" if has_deep_link else "open"
+        open_states = {"unknown", "manual", "unsubmitted"}
+        visible = 0
+        for item in all_items:
+            item_status = "manual" if item.get("manual") else item.get("submission_state", "unknown")
+            item_course = str(item.get("course_id") or item.get("group_id") or "")
+            matches = (
+                (not initial_status or (item_status in open_states if initial_status == "open" else item_status == initial_status))
+                and (not initial_course or item_course == initial_course)
+            )
+            item["initial_hidden"] = not matches
+            item["initial_first_visible"] = matches and visible == 0
+            if matches:
+                visible += 1
+        initial_filter_empty = bool(all_items) and visible == 0
+        return {
+            "items": all_items,
+            "courses": courses,
+            "initial_course": initial_course,
+            "initial_status": initial_status,
+            "initial_filter_empty": initial_filter_empty,
+        }
+
+    def courses_data(owner_id, request: Request):
+        courses = _apply_course_order(service.list_courses(owner_id), owner_id, request.cookies.get(COURSE_ORDER_COOKIE))
+        return {"courses": courses}
 
     def dashboard_data(owner_id):
         value = service.dashboard(owner_id)
@@ -655,8 +724,8 @@ def create_app(settings=None) -> FastAPI:
         return value
 
     app.add_api_route("/", page("dashboard.html", "總覽", "dashboard", dashboard_data), methods=["GET"])
-    app.add_api_route("/todos", page("todos.html", "待辦", "todos", todo_data), methods=["GET"])
-    app.add_api_route("/courses", page("courses.html", "課程", "courses", lambda oid: {"courses": service.list_courses(oid)}), methods=["GET"])
+    app.add_api_route("/todos", page("todos.html", "待辦", "todos", todo_data, pass_request=True), methods=["GET"])
+    app.add_api_route("/courses", page("courses.html", "課程", "courses", courses_data, pass_request=True), methods=["GET"])
     app.add_api_route("/settings/connections", page("connections.html", "連接設定", "settings", connection_data), methods=["GET"])
     app.add_api_route("/settings/appearance", page("appearance.html", "外觀設定", "settings", lambda oid: {}), methods=["GET"])
     app.add_api_route("/status", page("status.html", "系統狀態", "settings", status_data), methods=["GET"])
