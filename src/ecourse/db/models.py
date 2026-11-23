@@ -51,6 +51,7 @@ class Owner(Base):
     password_hash: Mapped[str | None] = mapped_column(Text)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Taipei", nullable=False)
     locale: Mapped[str] = mapped_column(String(16), default="zh-Hant", nullable=False)
+    tutorial_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -277,6 +278,7 @@ class SyncJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
     coverage: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[str | None] = mapped_column(Text)
 
 
 class SyncScope(Base):

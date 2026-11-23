@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% block action %}<button data-action="sync">{{ t('立即同步') }}</button>{% endblock %}
 {% block content %}
 <section class="stats">{% for key,label in [('today','今天'),('next_seven_days','未來七天'),('overdue','已逾期'),('needs_confirmation','待確認')] %}<article><span>{{ t(label) }}</span><strong>{{ data.get('counts',{}).get(key,0) }}</strong></article>{% endfor %}</section>
 <section class="grid">

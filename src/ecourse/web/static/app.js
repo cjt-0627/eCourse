@@ -259,8 +259,10 @@ async function watchSync(jobs) {
       return;
     }
     const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-    notice(`同步進行中（已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。`);
-    await delay(1500);
+    const percents = states.map(job => Number(job.progress?.percent ?? (["succeeded", "partial", "failed", "cancelled"].includes(job.state) ? 100 : 0)));
+    const avg = percents.length ? Math.round(percents.reduce((sum, n) => sum + n, 0) / percents.length) : 0;
+    notice(avg > 0 ? `同步進行中（${avg}% · 已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。` : `同步進行中（已過 ${elapsed} 秒）；可離開此頁，背景仍會繼續。`);
+    await delay(1000);
   }
 }
 
@@ -277,11 +279,57 @@ setup?.addEventListener("submit", event => {
     } catch (reason) { error.textContent = reason.message; }
   });
 });
-async function watchSchoolLogin() {
+const EXP_PROGRESS_K = 2.5;
+const EXP_PROGRESS_DENOM = Math.expm1(EXP_PROGRESS_K);
+// Normalized exponential ease-in: f(x) = (e^(k*x) - 1) / (e^k - 1), slower early and faster near 100%.
+function expProgress(rawPercent, done = false) {
+  if (done) return 100;
+  const x = Math.max(0, Math.min(1, Number(rawPercent || 0) / 100));
+  if (x <= 0) return 0;
+  if (x >= 1) return 100;
+  return Math.min(99, Math.max(1, Math.round((Math.expm1(EXP_PROGRESS_K * x) / EXP_PROGRESS_DENOM) * 100)));
+}
+
+function renderLoginProgress(box, rawPercent, label, done = false) {
+  let wrap = box.querySelector(".login-progress");
+  if (!wrap) {
+    box.replaceChildren();
+    wrap = document.createElement("div");
+    wrap.className = "login-progress";
+    const head = document.createElement("div");
+    head.className = "login-progress-head";
+    const text = document.createElement("span");
+    text.dataset.role = "label";
+    const pct = document.createElement("strong");
+    pct.dataset.role = "percent";
+    head.append(text, pct);
+    const bar = document.createElement("progress");
+    bar.className = "sync-progress";
+    bar.max = 100;
+    wrap.append(head, bar);
+    box.append(wrap);
+  }
+  const value = expProgress(rawPercent, done);
+  const textEl = wrap.querySelector('[data-role="label"]');
+  const pctEl = wrap.querySelector('[data-role="percent"]');
+  const barEl = wrap.querySelector("progress");
+  if (textEl) textEl.textContent = label;
+  if (pctEl) pctEl.textContent = `${value}%`;
+  if (barEl) {
+    barEl.value = value;
+    barEl.classList.toggle("is-done", done);
+  }
+}
+
+async function watchSchoolLogin(initialRaw = 10) {
   const box = document.querySelector("#login-challenge");
+  let raw = initialRaw;
+  let authTicks = 0;
+  if (box) renderLoginProgress(box, raw, "等待背景服務開始驗證…");
   while (box) {
     const state = await api("/api/v1/auth/school/status");
     if (state.state === "succeeded") {
+      renderLoginProgress(box, 100, "驗證成功，正在進入系統…", true);
       await api("/api/v1/auth/school/complete", {method: "POST", body: "{}"});
       location.href = "/courses";
       return;
@@ -308,17 +356,27 @@ async function watchSchoolLogin() {
         withForm(form, async () => {
           try {
             await api("/api/v1/auth/school/challenge-answer", {method: "POST", body: JSON.stringify({answer: input.value, request_id: crypto.randomUUID()})});
-            box.textContent = "正在驗證…";
-            await watchSchoolLogin();
+            renderLoginProgress(box, 68, "正在驗證送出的驗證碼…");
+            await watchSchoolLogin(68);
           } catch (error) { box.textContent = error.message; }
         });
       });
       box.append(hint, image, form);
       return;
     }
-    if (["failed", "credentials_invalid", "expired"].includes(state.state)) throw new Error("登入資料不正確或校方暫時無法驗證。");
-    box.textContent = "正在驗證校務帳號…";
-    await delay(1500);
+    if (["failed", "credentials_invalid", "expired"].includes(state.state)) {
+      box.replaceChildren();
+      throw new Error("登入資料不正確或校方暫時無法驗證。");
+    }
+    if (state.state === "authenticating") {
+      authTicks += 1;
+      raw = raw < 35 ? 35 : raw < 94 ? Math.min(94, raw + 6) : Math.min(98, raw + (98 - raw) * 0.25);
+      renderLoginProgress(box, raw, "正在連線校務系統並自動辨識驗證碼…");
+    } else {
+      raw = Math.min(28, raw + 4);
+      renderLoginProgress(box, raw, "等待背景服務開始驗證…");
+    }
+    await delay(500);
   }
 }
 login?.addEventListener("submit", event => {
@@ -455,7 +513,7 @@ document.querySelectorAll(".connection[data-attempt]").forEach(row => { const pl
 const targetParams = new URLSearchParams(location.search), targetId = targetParams.get("item") || targetParams.get("manual");
 if (targetId) { const target = document.querySelector(`[data-id="${CSS.escape(targetId)}"]`)?.closest(".todo"); if (target) { target.classList.add("targeted"); target.scrollIntoView({block: "center"}); } }
 
-// Pointer events support both touch and mouse without making course links draggable.
+// Pointer events support both touch and mouse without making course links natively draggable.
 const courseGrid = document.querySelector('[data-course-grid]');
 if (courseGrid) {
   const key = `ecourse.course-order.v1:${courseGrid.dataset.owner}`;
@@ -478,51 +536,71 @@ if (courseGrid) {
       status.textContent = locale === 'en' ? 'Order changed. Browser storage is unavailable; reloading will reset it.' : '排序已調整，但瀏覽器無法儲存，重新整理後會還原。';
     }
   };
-  let drag = null;
+  // Long-press (mouse or touch) lifts the whole card; short taps still open the course.
+  const HOLD_MS = 380, SLOP = 8;
+  let press = null, drag = null, suppressClick = false;
+  const clearPress = () => { if (press) { clearTimeout(press.timer); press.card.classList.remove('pressing'); press = null; } };
+  const follow = event => {
+    drag.card.style.transform = 'none';
+    const r = drag.card.getBoundingClientRect();
+    drag.card.style.transform = `translate(${event.clientX - drag.dx - r.left}px, ${event.clientY - drag.dy - r.top}px)`;
+  };
   courseGrid.addEventListener('keydown', event => {
-    const handle = event.target.closest('.course-drag');
-    if (!handle) return;
-    if (event.key === 'Escape' && drag) { finish(true); return; }
-    if (!['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home','End'].includes(event.key) || drag) return;
+    const link = event.target.closest('.course-tile-link');
+    if (!link || !event.altKey) return;
+    if (!['ArrowLeft','ArrowUp','ArrowRight','ArrowDown','Home','End'].includes(event.key)) return;
     event.preventDefault();
-    const card = handle.closest('[data-course-id]');
+    const card = link.closest('[data-course-id]');
     const lane = card.closest('[data-course-lane]');
     const rows = [...lane.querySelectorAll('[data-course-id]')], index = rows.indexOf(card);
     const target = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : index + (['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1);
     if (target < 0 || target >= rows.length || target === index) return;
     lane.insertBefore(card, target > index ? rows[target].nextSibling : rows[target]);
-    handle.focus(); save(card);
+    link.focus(); save(card);
   });
   courseGrid.addEventListener('pointerdown', event => {
-    const handle = event.target.closest('.course-drag');
-    if (!handle || event.button !== 0 || drag) return;
-    event.preventDefault(); handle.focus();
-    const card = handle.closest('[data-course-id]');
-    drag = {card, handle, id: event.pointerId, lane:card.closest('[data-course-lane]'), original:[...card.closest('[data-course-lane]').querySelectorAll('[data-course-id]')], x:event.clientX, y:event.clientY, moved:false};
-    // Capture on the stable grid; moving a card must not interrupt the pointer stream.
-    courseGrid.setPointerCapture(event.pointerId);
+    const card = event.target.closest('[data-course-id]');
+    if (!card || event.button !== 0 || drag || press) return;
+    card.classList.add('pressing');
+    press = {card, id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
+      const p = press; press = null;
+      const r = p.card.getBoundingClientRect();
+      p.card.classList.remove('pressing'); p.card.classList.add('sorting');
+      drag = {card: p.card, id: p.id, lane: p.card.closest('[data-course-lane]'), original: [...p.card.closest('[data-course-lane]').querySelectorAll('[data-course-id]')], dx: p.x - r.left, dy: p.y - r.top, moved: false};
+      suppressClick = true;
+      try { courseGrid.setPointerCapture(p.id); } catch {}
+      navigator.vibrate?.(12);
+    }, HOLD_MS)};
   });
   courseGrid.addEventListener('pointermove', event => {
+    if (press && event.pointerId === press.id && Math.hypot(event.clientX - press.x, event.clientY - press.y) > SLOP) clearPress();
     if (!drag || event.pointerId !== drag.id) return;
-    if (!drag.moved && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<6) return;
-    drag.moved=true; drag.card.classList.add('sorting');
-    if(event.clientY > window.innerHeight - 65) window.scrollBy(0, 18);
-    if(event.clientY < 65) window.scrollBy(0, -18);
-    const target = document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-course-id]');
-    if (!target || target === drag.card || target.closest('[data-course-lane]') !== drag.lane) return;
-    const rows=[...drag.lane.querySelectorAll('[data-course-id]')];
-    drag.lane.insertBefore(drag.card, rows.indexOf(target)>rows.indexOf(drag.card) ? target.nextSibling : target);
+    drag.moved = true;
+    if (event.clientY > window.innerHeight - 65) window.scrollBy(0, 18);
+    if (event.clientY < 65) window.scrollBy(0, -18);
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-course-id]');
+    if (target && target !== drag.card && target.closest('[data-course-lane]') === drag.lane) {
+      const rows = [...drag.lane.querySelectorAll('[data-course-id]')];
+      drag.lane.insertBefore(drag.card, rows.indexOf(target) > rows.indexOf(drag.card) ? target.nextSibling : target);
+    }
+    follow(event);
   });
   function finish(cancel = false) {
+    clearPress();
     if (!drag) return;
     const current = drag; drag = null;
     if (cancel) current.original.forEach(card => current.lane.append(card));
-    current.card.classList.remove('sorting');
+    current.card.classList.remove('sorting'); current.card.style.transform = '';
     if (courseGrid.hasPointerCapture(current.id)) courseGrid.releasePointerCapture(current.id);
-    current.handle.focus({preventScroll:true});
     if (!cancel && current.moved) save(current.card);
+    setTimeout(() => { suppressClick = false; }, 60);
   }
   courseGrid.addEventListener('pointerup', () => finish());
   courseGrid.addEventListener('pointercancel', () => finish(true));
   courseGrid.addEventListener('lostpointercapture', () => finish(true));
+  // Block page scroll once a card is lifted; before that, scrolling cancels the press.
+  courseGrid.addEventListener('touchmove', event => { if (drag) event.preventDefault(); }, {passive: false});
+  courseGrid.addEventListener('contextmenu', event => { if (press || drag) event.preventDefault(); });
+  courseGrid.addEventListener('dragstart', event => event.preventDefault());
+  courseGrid.addEventListener('click', event => { if (suppressClick) { event.preventDefault(); event.stopPropagation(); } }, true);
 }

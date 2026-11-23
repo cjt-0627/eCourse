@@ -181,22 +181,39 @@ def begin_school_auth(settings, account: str, password: str, *, platform: str = 
     if not account or not password or platform not in {"elearn", "eeclass"}:
         raise ValueError("校務登入資料無效。")
     db = Database(settings)
+    from ecourse.vault import Vault, VaultError
+
     with db.session() as session:
-        owner = session.query(Owner).order_by(Owner.created_at).first()
-        if owner is None:
+        owners = session.query(Owner).order_by(Owner.created_at).all()
+        if not owners:
             local_host = urlsplit(settings.base_url).hostname in {"localhost", "127.0.0.1", "::1"}
             if settings.environment != "local" or not local_host:
                 raise ValueError("正式環境尚未安全初始化擁有者。")
-            owner = Owner(login_name="school-owner", password_hash=None, timezone="Asia/Taipei", created_at=_now())
+        try:
+            vault = Vault(settings.secret_dir)
+        except VaultError:
+            raise ValueError("校務登入失敗。") from None
+        # An account that already has a verified credential must authenticate
+        # against it; public callers must never rotate an active connection.
+        for existing in owners:
+            fingerprint = vault.account_fingerprint(account, owner_id=existing.id)
+            if session.query(CredentialSecret.id).filter(
+                CredentialSecret.owner_id == existing.id,
+                CredentialSecret.verified_at.is_not(None),
+                CredentialSecret.account_fingerprint == fingerprint,
+            ).first() is not None:
+                raise ValueError("校務登入失敗。")
+        # Reuse an owner that never saved any credential (e.g. the internal
+        # owner created before first sign-in); otherwise each school account
+        # gets its own owner so its data stays isolated.
+        owner = next((o for o in owners if session.query(CredentialSecret.id).filter(CredentialSecret.owner_id == o.id).first() is None), None)
+        if owner is None:
+            owner = Owner(
+                login_name="school-owner" if not owners else f"school-owner-{secrets.token_hex(6)}",
+                password_hash=None, timezone="Asia/Taipei", created_at=_now(),
+            )
             session.add(owner)
             session.flush()
-        elif session.query(CredentialSecret.id).filter(
-            CredentialSecret.owner_id == owner.id,
-            CredentialSecret.verified_at.is_not(None),
-        ).first() is not None:
-            # Existing installations authenticate against the encrypted saved
-            # credential. Public callers must never rotate an active connection.
-            raise ValueError("校務登入失敗。")
         owner_id = owner.id
     service = Service(settings)
     credential = service.save_credentials(owner_id, account, password, verified=False)
@@ -222,7 +239,7 @@ def begin_school_auth(settings, account: str, password: str, *, platform: str = 
 
 
 def authenticate_school_credential(settings, account: str, password: str) -> Owner | None:
-    """Verify the sole owner's saved encrypted school credential in memory."""
+    """Verify a saved encrypted school credential in memory; one owner per school account."""
     from ecourse.vault import Vault, VaultError
 
     account = account.strip()
@@ -230,39 +247,41 @@ def authenticate_school_credential(settings, account: str, password: str) -> Own
         return None
     db = Database(settings)
     with db.session() as session:
-        owner = session.query(Owner).order_by(Owner.created_at).first()
-        if owner is None:
-            return None
-        records = session.query(CredentialSecret).filter(
-            CredentialSecret.owner_id == owner.id,
-            CredentialSecret.verified_at.is_not(None),
-        ).order_by(CredentialSecret.updated_at.desc()).all()
-        owner_id = owner.id
-        session.expunge(owner)
+        owners = session.query(Owner).order_by(Owner.created_at).all()
+        loaded = {}
+        for owner in owners:
+            loaded[owner.id] = session.query(CredentialSecret).filter(
+                CredentialSecret.owner_id == owner.id,
+                CredentialSecret.verified_at.is_not(None),
+            ).order_by(CredentialSecret.updated_at.desc()).all()
+            session.expunge(owner)
+        for records in loaded.values():
+            for record in records:
+                session.expunge(record)
     try:
         vault = Vault(settings.secret_dir)
-        candidate_fingerprint = vault.account_fingerprint(account, owner_id=owner_id)
-        matched, matched_id = False, None
-        for record in records:
-            saved = vault.unseal(
-                record.encrypted_payload, platform="elearn",
-                account_id=owner_id, purpose="credential",
-            )
-            saved_account = str(saved.get("account", "")).strip().casefold()
-            fingerprint_matches = bool(record.account_fingerprint) and hmac.compare_digest(record.account_fingerprint, candidate_fingerprint)
-            account_matches = hmac.compare_digest(saved_account.encode(), account.casefold().encode())
-            password_matches = hmac.compare_digest(str(saved.get("password", "")).encode(), password.encode())
-            saved.clear()
-            if fingerprint_matches and account_matches and password_matches:
-                matched = True
-                matched_id = matched_id or record.id
-        if matched:
-            try:
-                # Installations that signed in before eeclass was auto-connected.
-                ensure_eeclass_connection(settings, owner_id, matched_id)
-            except Exception:
-                pass  # Never block a valid sign-in on a background connection.
-        return owner if matched else None
+        for owner in owners:
+            candidate_fingerprint = vault.account_fingerprint(account, owner_id=owner.id)
+            matched_id = None
+            for record in loaded[owner.id]:
+                saved = vault.unseal(
+                    record.encrypted_payload, platform="elearn",
+                    account_id=owner.id, purpose="credential",
+                )
+                saved_account = str(saved.get("account", "")).strip().casefold()
+                fingerprint_matches = bool(record.account_fingerprint) and hmac.compare_digest(record.account_fingerprint, candidate_fingerprint)
+                account_matches = hmac.compare_digest(saved_account.encode(), account.casefold().encode())
+                password_matches = hmac.compare_digest(str(saved.get("password", "")).encode(), password.encode())
+                saved.clear()
+                if fingerprint_matches and account_matches and password_matches:
+                    matched_id = matched_id or record.id
+            if matched_id:
+                try:
+                    # Installations that signed in before eeclass was auto-connected.
+                    ensure_eeclass_connection(settings, owner.id, matched_id)
+                except Exception:
+                    pass  # Never block a valid sign-in on a background connection.
+                return owner
     except (VaultError, UnicodeError):
         return None
     return None

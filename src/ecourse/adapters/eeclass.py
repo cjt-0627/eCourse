@@ -8,14 +8,15 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from playwright.async_api import Browser, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Browser, Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError
 
 from ecourse.parsing.dates import parse_nthu_date
-from ecourse.parsing.html import normalize_course_code, parse_courses, parse_eeclass_activity_page
+from ecourse.parsing.html import normalize_course_code, parse_courses, parse_eeclass_activity_page, parse_eeclass_score_page
 
 from .base import AdapterStatus, CaptchaSolver, CourseItem, FetchResult, ItemDetail, SessionVerification
 from .eeclass_http import EeclassHttp, NeedsBrowser, RateLimited, SessionExpired, UpstreamTimeout, html_to_text
 from .nthu_sso import NthuSsoMixin, SSO_HOST
+from .shared_context import SharedHttpPool
 
 _MAIN_SELECTOR = "#fs-content, #page-main, main, #content, .page-content, [role='main']"
 _COURSE_REGION_SELECTOR = "[data-role*='course'], .course-list, #course-list, [class*='courseList']"
@@ -40,12 +41,19 @@ class EeclassAdapter(NthuSsoMixin):
         # ECOURSE_EECLASS_HTTP=0 turns the HTTP path off.
         self.use_http = os.environ.get("ECOURSE_EECLASS_HTTP", "1") != "0" if use_http is None else use_http
         self.http_transport = http_transport
+        self._http_pool = SharedHttpPool()
 
-    def _http(self, storage_state: dict[str, Any]) -> EeclassHttp | None:
+    def _http(self, storage_state: dict[str, Any]):
         if not self.use_http:
             return None
-        session = EeclassHttp(storage_state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0))
-        return session if session.usable else None
+        return self._http_pool.lease(
+            storage_state,
+            lambda state: EeclassHttp(state, transport=self.http_transport, timeout=min(self.timeout_ms / 1000, 25.0)),
+        )
+
+    async def close(self) -> None:
+        await self._http_pool.close()
+        await super().close()
 
     async def _verify_page(self, page: Page) -> SessionVerification:
         if urlparse(page.url).hostname != "eeclass.nthu.edu.tw" or urlparse(page.url).path == "/":
@@ -200,8 +208,18 @@ class EeclassAdapter(NthuSsoMixin):
                 raise NeedsBrowser  # the rendered DOM may differ; let the browser path decide
             return kind, parse_eeclass_activity_page(html, final, remote_course_id, kind), True, None
 
-        pages = await asyncio.gather(*(fetch_list(kind, route) for kind, route in _ROUTES.items()))
-        items = tuple(item for _kind, records, _complete, _warning in pages for item in records)
+        async def fetch_score():
+            try:
+                html, final = await http.get_text(f"https://eeclass.nthu.edu.tw/course/score/{remote_course_id}")
+            except (SessionExpired, UpstreamTimeout, RateLimited, NeedsBrowser, ValueError):
+                return ()
+            return parse_eeclass_score_page(html, final, remote_course_id)
+
+        pages, score_items = await asyncio.gather(
+            asyncio.gather(*(fetch_list(kind, route) for kind, route in _ROUTES.items())),
+            fetch_score(),
+        )
+        items = tuple(item for _kind, records, _complete, _warning in pages for item in records) + score_items
         warnings = tuple(warning for _kind, _records, _complete, warning in pages if warning)
         coverage = tuple(kind for kind, _records, complete, _warning in pages if complete)
         return FetchResult(items, coverage, all(complete for _kind, _records, complete, _warning in pages), warnings)
@@ -314,8 +332,24 @@ class EeclassAdapter(NthuSsoMixin):
                 finally:
                     await detail_page.close()
 
-            pages = await asyncio.gather(*(fetch_list(kind, route) for kind, route in routes.items()))
-            items = tuple(item for _kind, records, _complete, _warning in pages for item in records)
+            async def fetch_score():
+                score_page = await context.new_page()
+                score_page.set_default_timeout(self.timeout_ms)
+                try:
+                    await self._goto(score_page, f"https://eeclass.nthu.edu.tw/course/score/{remote_course_id}")
+                    if urlparse(score_page.url).hostname == SSO_HOST or await _has_official_sso_login_link(score_page):
+                        return ()
+                    return parse_eeclass_score_page(await score_page.content(), score_page.url, remote_course_id)
+                except (PlaywrightError, PlaywrightTimeoutError, ValueError):
+                    return ()
+                finally:
+                    await score_page.close()
+
+            pages, score_items = await asyncio.gather(
+                asyncio.gather(*(fetch_list(kind, route) for kind, route in routes.items())),
+                fetch_score(),
+            )
+            items = tuple(item for _kind, records, _complete, _warning in pages for item in records) + score_items
             warnings = tuple(warning for _kind, _records, _complete, warning in pages if warning)
             coverage = tuple(kind for kind, _records, complete, _warning in pages if complete)
             complete = all(complete for _kind, _records, complete, _warning in pages)

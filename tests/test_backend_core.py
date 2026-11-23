@@ -83,3 +83,18 @@ def test_atomic_claim_and_generation_guard(backend):
     import asyncio
     assert asyncio.run(first.commit_result(claimed.id, {"courses": [], "complete": True})) is False
     assert service.get_sync_job(owner.id, claimed.id)["error_code"] == "stale_generation"
+
+
+def test_claim_skips_connections_that_already_have_a_running_job(backend):
+    settings, db, owner = backend
+    service = Service(settings)
+    credential = service.save_credentials(owner.id, "student-id", "school-password")
+    service.connect(owner.id, "elearn", credential["id"])
+    service.connect(owner.id, "eeclass", credential["id"])
+    worker = Worker(settings, worker_id="one")
+    first = worker.claim_job()
+    assert first is not None
+    # The other platform's job is claimable while the first one is still running.
+    second = worker.claim_job(exclude_connections=(first.connection_id,))
+    assert second is not None and second.connection_id != first.connection_id
+    assert worker.claim_job(exclude_connections=(first.connection_id, second.connection_id)) is None

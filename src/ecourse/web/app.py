@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import secrets
 import time
 import uuid
@@ -153,6 +154,25 @@ def _taipei(value) -> str:
     except (TypeError, ValueError): return str(value)
 
 
+EXP_PROGRESS_K = 2.5
+EXP_PROGRESS_DENOM = math.expm1(EXP_PROGRESS_K)
+
+
+def _exp_progress(value, done: bool = False) -> int:
+    """Map linear 0..100 progress through a normalized exponential ease-in curve."""
+    if done:
+        return 100
+    try:
+        x = max(0.0, min(1.0, float(value or 0) / 100.0))
+    except (TypeError, ValueError):
+        return 0
+    if x <= 0.0:
+        return 0
+    if x >= 1.0:
+        return 100
+    return min(99, max(1, round((math.expm1(EXP_PROGRESS_K * x) / EXP_PROGRESS_DENOM) * 100)))
+
+
 def create_app(settings=None) -> FastAPI:
     settings = settings or Settings.from_env()
     db, service = Database(settings), Service(settings)
@@ -162,6 +182,7 @@ def create_app(settings=None) -> FastAPI:
     app.state.browser_handoffs = {}
     templates = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=select_autoescape(["html", "xml"]))
     templates.filters["taipei"] = _taipei
+    templates.filters["exp_progress"] = _exp_progress
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
     @app.middleware("http")
@@ -511,6 +532,13 @@ def create_app(settings=None) -> FastAPI:
     @app.get("/api/v1/sync/jobs/{job_id}")
     def sync_job(job_id: str, request: Request, user=Depends(owner)): return _data(request, service.get_sync_job(user.id, job_id))
 
+    @app.get("/api/v1/initial-sync")
+    def initial_sync(request: Request, user=Depends(owner)): return _data(request, service.initial_sync_status(user.id))
+
+    @app.post("/api/v1/tutorial/complete")
+    def tutorial_complete(request: Request, auth=Depends(require_write)):
+        return _data(request, service.complete_tutorial(auth[0].id))
+
     @app.put("/api/v1/settings/language")
     def language(body: LanguageBody, request: Request, auth=Depends(require_write)):
         return _data(request, service.update_locale(auth[0].id, body.locale))
@@ -518,8 +546,9 @@ def create_app(settings=None) -> FastAPI:
     def render(template: str, *, title: str, active: str, data, auth) -> HTMLResponse:
         locale = normalize_locale(auth[0].locale)
         t = translator(locale)
+        first_run = service.initial_sync_status(auth[0].id)
         return HTMLResponse(templates.get_template(template).render(
-            title=t(title), active=active, data=data, user=auth[0],
+            title=t(title), active=active, data=data, user=auth[0], first_run=first_run,
             csrf_token=auth[1].csrf_token, locale=locale, t=t,
             course_name=lambda name, code=None: localized_course_name(name, locale, code),
         ))

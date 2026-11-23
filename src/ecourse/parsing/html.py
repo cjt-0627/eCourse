@@ -131,6 +131,8 @@ def parse_course_content(html: str, base_url: str, platform: str, course_id: str
         if kind is None:
             continue
         parsed = urlparse(url)
+        if platform == "elearn" and parsed.path in {"/mod/assign/index.php", "/mod/quiz/index.php"}:
+            continue
         query = parse_qs(parsed.query)
         remote_id = query.get("id", [None])[0] or query.get("d", [None])[0] or parsed.path.rstrip("/").rsplit("/", 1)[-1]
         key = (kind, remote_id)
@@ -157,7 +159,12 @@ def parse_eeclass_activity_page(html: str, base_url: str, course_id: str, kind: 
     if kind == "announcement":
         anchors = soup.select("a.fs-bulletin-item, .fs-bulletin-item a")
         if not anchors:
-            anchors = soup.select("a[href*='/course/bulletin/']")
+            # Only links to a specific bulletin count; the course navigation and the
+            # 上架中/已下架 tabs point at the list page itself and are not announcements.
+            anchors = [
+                anchor for anchor in soup.select("a[href*='/course/bulletin/']")
+                if urlparse(urljoin(base_url, str(anchor.get("href") or ""))).path.rstrip("/") != f"/course/bulletin/{course_id}"
+            ]
         for index, anchor in enumerate(anchors):
             title = " ".join(anchor.get_text(" ", strip=True).split())
             if not title:
@@ -224,3 +231,91 @@ def parse_eeclass_bulletin_date(text: str | None, now: datetime) -> datetime | N
         return value
     except ValueError:  # e.g. 02-29 in a non-leap year
         return None
+
+
+_UNGRADED_MARKERS = frozenset({"", "-", "--", "不開放", "尚未批改", "未評分", "尚未評分", "not graded", "n/a"})
+
+
+def parse_elearn_gradebook(html: str, base_url: str, course_id: str) -> tuple[CourseItem, ...]:
+    """Extract manual/offline gradebook items (e.g. Midterm/Exam 1) from Moodle's user grade report."""
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.user-grade, #region-main table.generaltable, #region-main table")
+    if table is None:
+        return ()
+    gradebook_url = urljoin(base_url, f"/grade/report/user/index.php?id={course_id}")
+    items: list[CourseItem] = []
+    for index, row in enumerate(table.select("tbody tr")):
+        row_classes = set(row.get("class") or ())
+        if "spacer" in row_classes:
+            continue
+        name_cell = row.select_one("th.column-itemname, td.column-itemname")
+        grade_cell = row.select_one("td.column-grade")
+        if name_cell is None or grade_cell is None:
+            continue
+        name_classes = set(name_cell.get("class") or ())
+        if "category" in name_classes or "baggt" in name_classes:
+            continue
+        # Assignments and quizzes already appear via /mod/assign/ and /mod/quiz/.
+        link = name_cell.select_one("a[href]")
+        if link is not None:
+            href = str(link.get("href") or "")
+            if "/mod/assign/" in href or "/mod/quiz/" in href:
+                continue
+        raw_title = " ".join(name_cell.get_text(" ", strip=True).split())
+        title = re.sub(r"^(?:手動項目|Manual\s+item)\s+", "", raw_title, flags=re.IGNORECASE).strip()
+        grade_raw = " ".join(grade_cell.get_text(" ", strip=True).split())
+        if not title or grade_raw.casefold() in _UNGRADED_MARKERS:
+            continue
+        range_cell = row.select_one("td.column-range")
+        range_text = " ".join(range_cell.get_text(" ", strip=True).split()) if range_cell else ""
+        range_match = re.match(r"^0\s*[–-]\s*(\d+(?:\.\d+)?)$", range_text)
+        grade_text = f"{grade_raw} / {range_match.group(1)}" if range_match else grade_raw
+        items.append(CourseItem(
+            remote_id=f"gradebook:{course_id}:{index}:{title}",
+            kind="grade",
+            title=title,
+            url=gradebook_url,
+            remote_status="graded",
+            grade_text=grade_text,
+            grading_status_text="成績簿",
+            status_evidence="gradebook",
+        ))
+    return tuple(items)
+
+
+def parse_eeclass_score_page(html: str, base_url: str, course_id: str) -> tuple[CourseItem, ...]:
+    """Extract published scores (Labs, Quizzes, Midterm, etc.) from eeclass /course/score/<id>."""
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.select_one("#fs-content, #page-main") or soup
+    table = root.select_one("table")
+    if table is None:
+        return ()
+    headers = [" ".join(th.get_text(" ", strip=True).split()) for th in table.select("thead th")]
+    if not headers:
+        first_row = table.select_one("tr")
+        headers = [" ".join(th.get_text(" ", strip=True).split()) for th in first_row.select("th")] if first_row else []
+    body_rows = table.select("tbody tr")
+    if not headers or not body_rows:
+        return ()
+    cells = [" ".join(cell.get_text(" ", strip=True).split()) for cell in body_rows[0].select("th, td")]
+    if len(cells) < 2:
+        return ()
+    score_url = urljoin(base_url, f"/course/score/{course_id}")
+    skip_headers = {"姓名", "name", "等級", "等第", "學期等級", "grade", "letter grade"}
+    items: list[CourseItem] = []
+    for index, (header, value) in enumerate(zip(headers, cells)):
+        if index == 0 or not header or header.casefold() in skip_headers:
+            continue
+        if value.casefold() in _UNGRADED_MARKERS:
+            continue
+        items.append(CourseItem(
+            remote_id=f"score:{course_id}:{index}:{header}",
+            kind="grade",
+            title=header,
+            url=score_url,
+            remote_status="graded",
+            grade_text=value,
+            grading_status_text="成績計算",
+            status_evidence="gradebook",
+        ))
+    return tuple(items)

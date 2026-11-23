@@ -37,3 +37,53 @@ def parse_nthu_date(value: str | None) -> ParsedDate:
     except ValueError:
         return ParsedDate(DatePrecision.UNKNOWN, source_text=source)
     return ParsedDate(DatePrecision.EXACT, due_at=local.astimezone(UTC), source_text=source)
+
+
+def _taipei_date(now: datetime | date | None = None) -> date:
+    if now is None:
+        return datetime.now(TAIPEI).date()
+    if isinstance(now, datetime):
+        return (now.astimezone(TAIPEI) if now.tzinfo else now.replace(tzinfo=TAIPEI)).date()
+    return now
+
+
+def current_nthu_terms(now: datetime | date | None = None) -> tuple[str, ...]:
+    """Return active 5-digit NTHU term prefixes (ROC year + 10/20/30) for ``now``."""
+    today = _taipei_date(now)
+    if today.month >= 8:
+        roc_year = today.year - 1911
+        return (f"{roc_year}10", f"{roc_year - 1}30") if today.month == 8 else (f"{roc_year}10",)
+    if today.month == 1:
+        roc_year = today.year - 1 - 1911
+        return (f"{roc_year}10",)
+    roc_year = today.year - 1 - 1911
+    return (f"{roc_year}20", f"{roc_year}30") if today.month == 7 else (f"{roc_year}20",)
+
+
+def current_nthu_term_window(now: datetime | date | None = None) -> tuple[date, date]:
+    """Return a buffered (start_date, end_date) covering the active NTHU semester."""
+    today = _taipei_date(now)
+    if today.month >= 8:
+        return date(today.year, 8, 1), date(today.year + 1, 2, 28)
+    if today.month == 1:
+        return date(today.year - 1, 8, 1), date(today.year, 2, 28)
+    return date(today.year, 1, 1), date(today.year, 8, 31)
+
+
+def is_current_nthu_course_code(course_code: str | None, now: datetime | date | None = None) -> bool:
+    """True when ``course_code`` starts with an active 5-digit NTHU term code."""
+    if not course_code:
+        return False
+    match = re.match(r"^(\d{5})[A-Z]", course_code.strip().upper())
+    if not match:
+        return False
+    return match.group(1) in current_nthu_terms(now)
+
+
+def is_within_current_nthu_term(value: datetime | date | None, now: datetime | date | None = None) -> bool:
+    """True if ``value`` is undated or falls inside the buffered current NTHU semester."""
+    if value is None:
+        return True
+    target = _taipei_date(value)
+    start, end = current_nthu_term_window(now)
+    return start <= target <= end
