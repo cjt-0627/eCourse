@@ -8,7 +8,12 @@
 <article class="course-card course-tile {{ 'needs-selection' if course.get('selection_required') }}" data-course-id="{{ course.get('id') }}" data-platform="{{ course.get('display_platform') }}">
   <a class="course-tile-link" href="/courses/{{ course.get('id') }}">
     <h2 title="{{ localized_name }}">{{ localized_name }}</h2>
-    {% if course.get('course_code') %}<span class="course-code">{{ course.get('course_code') }}</span>{% endif %}
+    {% set info=course_info(course.get('course_code')) if course.get('course_code') else {} %}
+    {% if info.get('periods') or info.get('teacher') or course.get('course_code') %}<dl class="course-facts">
+      {% if info.get('periods') %}<div><dt>{{ t('節次') }}</dt><dd>{{ info.get('periods') }}</dd></div>{% endif %}
+      {% if info.get('teacher') %}<div><dt>{{ t('老師') }}</dt><dd>{{ info.get('teacher') }}</dd></div>{% endif %}
+      {% if course.get('course_code') %}<div><dt>{{ t('課號') }}</dt><dd class="course-code">{{ course.get('course_code') }}</dd></div>{% endif %}
+    </dl>{% endif %}
     {% if course.get('selection_required') or course.get('disabled') or course.get('term') %}<span class="course-meta">{% if course.get('selection_required') %}<span class="badge error">{{ t('待設定') }}</span>{% elif course.get('disabled') %}{{ t('不使用線上平台') }}{% endif %}{% if course.get('term') %}<span>{{ course.get('term') }}</span>{% endif %}</span>{% endif %}
     {% if course.get('selection_required') %}<p class="course-setup-hint">{{ t('選擇資料來源後，即可查看教材與待辦。') }}</p><span class="course-setup-link">{{ t('設定課程') }} →</span>{% endif %}
   </a>

@@ -26,6 +26,7 @@ from ecourse.auth.service import (
     school_auth_challenge_image, school_auth_status,
 )
 from ecourse.config import Settings
+from ecourse.course_catalog import CourseCatalog
 from ecourse.db import Database
 from ecourse.db.models import AppSession, Owner, PlatformConnection, ScheduleState, SyncJob
 from ecourse.platforms import BRAVE_EXTENSION_ID
@@ -178,6 +179,7 @@ def create_app(settings=None) -> FastAPI:
     db, service = Database(settings), Service(settings)
     app = FastAPI(title="eCourse", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings, app.state.db, app.state.service = settings, db, service
+    app.state.course_catalog = CourseCatalog(Path(settings.data_dir) / "nthu_course_catalog.json")
     app.state.login_limiter = SlidingLimiter(8, 300)
     app.state.browser_handoffs = {}
     templates = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=select_autoescape(["html", "xml"]))
@@ -551,6 +553,7 @@ def create_app(settings=None) -> FastAPI:
             title=t(title), active=active, data=data, user=auth[0], first_run=first_run,
             csrf_token=auth[1].csrf_token, locale=locale, t=t,
             course_name=lambda name, code=None: localized_course_name(name, locale, code),
+            course_info=lambda code: app.state.course_catalog.describe(code, locale),
         ))
 
     def page(template: str, title: str, active: str, load):

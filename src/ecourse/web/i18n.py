@@ -103,6 +103,7 @@ EN = {
     "內容": "Content", "未命名": "Untitled", "期限": "Due", "測驗關閉": "Quiz closes", "期限日期": "Due date", "開始": "Starts", "日期": "Date", "發布時間": "Published", "評分狀態": "Grading status", "最後檢查": "Last checked",
     "使用已登入狀態開啟平台": "Open platform with signed-in session", "前往原平台": "Open original platform", "課程來源": "Course sources", "來源": "Source", "使用此來源": "Use this source", "不使用": "Do not use",
     "至": "to", "項課務與事件 · 產生於": "coursework items and events · generated at", "事件": "Event", "這段期間沒有課務項目。": "No coursework items in this period.", "找不到摘要": "Digest not found", "摘要可能已超過保留期限，或不屬於目前的擁有者。": "The digest may have expired or may not belong to the current owner.",
+    "節次": "Periods", "老師": "Teacher", "課號": "Course no.",
 }
 
 
