@@ -812,3 +812,76 @@ def test_courses_ssr_applies_persisted_order_cookie(web):
     invalid_page = client.get("/courses")
     assert invalid_page.status_code == 200
     assert invalid_page.text.index(ids["Alpha"]) < invalid_page.text.index(ids["Beta"]) < invalid_page.text.index(ids["Gamma"])
+
+
+def test_detail_back_link_returns_to_origin_page(web):
+    client, _settings, db, owner = web
+    login(client)
+    with db.session() as session:
+        connection = PlatformConnection(owner_id=owner.id, platform="elearn", auth_state="connected", generation=1)
+        group = CourseGroup(owner_id=owner.id, display_name="演算法")
+        session.add_all((connection, group)); session.flush()
+        source = CourseSource(owner_id=owner.id, connection_id=connection.id, remote_course_id="algo-1", title="演算法")
+        session.add(source); session.flush()
+        session.add(CourseSelection(owner_id=owner.id, group_id=group.id, source_id=source.id, selection_state="selected", preference_version=1))
+        item = LearningItem(
+            owner_id=owner.id,
+            source_course_id=source.id,
+            kind="assignment",
+            remote_item_id="hw-1",
+            title="作業一",
+            remote_status="graded",
+            grade_text="95 / 100",
+        )
+        announcement = Announcement(
+            owner_id=owner.id,
+            source_course_id=source.id,
+            remote_id="ann-1",
+            title="期中公告",
+            body_sanitized="請準時繳交。",
+        )
+        session.add_all((item, announcement)); session.flush()
+        group_id, item_id, ann_id = group.id, item.id, announcement.id
+
+    assignments_html = client.get(f"/courses/{group_id}/assignments").text
+    assert f'href="/items/{item_id}?back=/courses/{group_id}/assignments"' in assignments_html
+
+    grades_html = client.get(f"/courses/{group_id}/grades").text
+    assert f'href="/items/{item_id}?back=/courses/{group_id}/grades"' in grades_html
+
+    announcements_html = client.get(f"/courses/{group_id}/announcements").text
+    assert f'href="/announcements/{ann_id}?back=/courses/{group_id}/announcements"' in announcements_html
+
+    from_assignments = client.get(f"/items/{item_id}?back=/courses/{group_id}/assignments").text
+    assert f'<a class="course-back" href="/courses/{group_id}/assignments">← 作業與測驗</a>' in from_assignments
+    assert '<a class="active" href="/courses">' in from_assignments
+
+    from_grades = client.get(f"/items/{item_id}?back=/courses/{group_id}/grades").text
+    assert f'<a class="course-back" href="/courses/{group_id}/grades">← 成績</a>' in from_grades
+
+    from_course_ann = client.get(f"/announcements/{ann_id}?back=/courses/{group_id}/announcements").text
+    assert f'<a class="course-back" href="/courses/{group_id}/announcements">← 公告</a>' in from_course_ann
+    assert '<a class="active" href="/courses">' in from_course_ann
+
+    from_dashboard = client.get(f"/items/{item_id}?back=/").text
+    assert '<a class="course-back" href="/">← 總覽</a>' in from_dashboard
+    assert '<a class="active" href="/">' in from_dashboard
+
+    from_filtered_todos = client.get(f"/items/{item_id}?back=/todos%3Fcourse%3D{group_id}").text
+    assert f'<a class="course-back" href="/todos?course={group_id}">← 待辦</a>' in from_filtered_todos
+
+    from_referer = client.get(
+        f"/items/{item_id}",
+        headers={"referer": f"{ORIGIN}/courses/{group_id}/assignments"},
+    ).text
+    assert f'<a class="course-back" href="/courses/{group_id}/assignments">← 作業與測驗</a>' in from_referer
+
+    cross_origin_referer = client.get(
+        f"/items/{item_id}",
+        headers={"referer": f"https://evil.example/courses/{group_id}/assignments"},
+    ).text
+    assert '<a class="course-back" href="/todos">← 待辦</a>' in cross_origin_referer
+
+    for unsafe in ("https://evil.example/phish", "//evil.example/phish", "javascript:alert(1)", "/unknown/path"):
+        fallback = client.get(f"/items/{item_id}", params={"back": unsafe}).text
+        assert '<a class="course-back" href="/todos">← 待辦</a>' in fallback
