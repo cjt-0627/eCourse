@@ -11,7 +11,7 @@
   <article class="row todo{{ ' first-visible' if item.get('initial_first_visible') }}" data-course="{{ item.get('course_id') or item.get('group_id') or '' }}" data-search="{{ item.get('title','') }} {{ course_name(item.get('course_name')) }}" data-status="{{ 'manual' if item.get('manual') else item.get('submission_state','unknown') }}"{{ ' hidden' if item.get('initial_hidden') }}>
     <span class="submission-check {{ item.get('submission_state','unknown') if not item.get('manual') else 'unknown' }}" aria-label="{{ t('已繳交') if item.get('submitted') else (t('已逾期') if item.get('submission_state') == 'overdue' else (t('未繳交') if item.get('submission_state') == 'unsubmitted' else t('繳交狀態待確認'))) }}">{{ '✓' if item.get('submitted') else ('!' if item.get('submission_state') == 'overdue' else '') }}</span>
     <div class="todo-main">
-      <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
+      <a href="{{ '/manual-events/' if item.get('manual') else '/items/' }}{{ item.get('id') }}{% if data.get('initial_course') %}?back=%2Ftodos%3Fcourse%3D{{ data.get('initial_course') }}{% endif %}"><strong>{{ item.get('title') or t('未命名項目') }}</strong></a>
       <small>{{ course_name(item.get('course_name')) or t('手動事件') }} · {{ item.get('display_at')|taipei if item.get('display_at') else t('期限未提供') }}</small>
       {% if item.get('manual') %}
         <small>{{ t('手動建立的考試／事件') }}</small>

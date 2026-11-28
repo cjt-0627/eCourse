@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -46,6 +46,63 @@ SYNC_STATE_LABELS = {
     "queued": "等待中", "running": "同步中", "waiting_user": "等待驗證",
     "succeeded": "成功", "partial": "部分完成", "failed": "失敗", "cancelled": "已取消",
 }
+COURSE_SECTION_TITLES = {
+    "materials": "教材", "assignments": "作業與測驗", "grades": "成績",
+    "announcements": "公告", "settings": "課程設定",
+}
+
+
+def _parse_safe_back(raw: str | None) -> tuple[str, str, str] | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return None
+    parts = urlsplit(value)
+    if parts.scheme or parts.netloc:
+        return None
+    path = parts.path
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    if path == "/":
+        return ("/", "總覽", "dashboard")
+    if path == "/todos":
+        kept = [(k, v) for k, v in parse_qsl(parts.query) if k == "course" and v]
+        href = f"/todos?{urlencode(kept)}" if kept else "/todos"
+        return (href, "待辦", "todos")
+    if path == "/courses":
+        return ("/courses", "全部課程", "courses")
+    segments = [seg for seg in path.split("/") if seg]
+    if (
+        len(segments) == 3
+        and segments[0] == "courses"
+        and segments[2] in COURSE_SECTION_TITLES
+        and ".." not in segments[1]
+    ):
+        course_id = quote(unquote(segments[1]), safe="")
+        section = segments[2]
+        return (f"/courses/{course_id}/{section}", COURSE_SECTION_TITLES[section], "courses")
+    return None
+
+
+def _resolve_detail_back(request: Request, default_active: str) -> tuple[str, str, str]:
+    parsed = _parse_safe_back(request.query_params.get("back"))
+    if parsed is not None:
+        return parsed
+    referer = request.headers.get("referer")
+    if referer:
+        ref = urlsplit(referer)
+        same_origin = (not ref.scheme and not ref.netloc) or (
+            ref.scheme in {"http", "https"} and ref.netloc == request.url.netloc
+        )
+        if same_origin:
+            ref_target = ref.path + (f"?{ref.query}" if ref.query else "")
+            parsed = _parse_safe_back(ref_target)
+            if parsed is not None:
+                return parsed
+    if default_active == "dashboard":
+        return ("/", "總覽", "dashboard")
+    return ("/todos", "待辦", "todos")
 
 
 class LoginBody(BaseModel):
@@ -741,8 +798,7 @@ def create_app(settings=None) -> FastAPI:
     def course_section_page(course_id: str, section: str, request: Request):
         auth = authenticate_session(db, request.cookies.get(SESSION_COOKIE))
         if auth is None: return RedirectResponse("/login", 303)
-        titles = {"materials": "教材", "assignments": "作業與測驗", "grades": "成績", "announcements": "公告", "settings": "課程設定"}
-        if section not in titles:
+        if section not in COURSE_SECTION_TITLES:
             raise HTTPException(status_code=404, detail="找不到課程頁面。")
         data = service.get_course_workspace(auth[0].id, course_id)
         data["section"] = section
@@ -752,7 +808,7 @@ def create_app(settings=None) -> FastAPI:
             source["external_url"] = _school_url(source.get("source_url"))
         for announcement in data.get("announcements", []):
             announcement["external_url"] = _school_url(announcement.get("source_url"))
-        return render("course_detail.html", title=titles[section], active="courses", data=data, auth=auth)
+        return render("course_detail.html", title=COURSE_SECTION_TITLES[section], active="courses", data=data, auth=auth)
 
     @app.get("/items/{item_id}", response_class=HTMLResponse)
     def item_page(item_id: str, request: Request):
@@ -771,7 +827,10 @@ def create_app(settings=None) -> FastAPI:
         if auth is None: return RedirectResponse("/login", 303)
         data = loader(auth[0].id)
         data["external_url"] = _school_url(data.get("source_url"))
-        return render("detail.html", title=title, active=active, data=data, auth=auth)
+        back_href, back_label, nav_active = _resolve_detail_back(request, active)
+        data["back_href"] = back_href
+        data["back_label"] = back_label
+        return render("detail.html", title=title, active=nav_active, data=data, auth=auth)
     return app
 
 
